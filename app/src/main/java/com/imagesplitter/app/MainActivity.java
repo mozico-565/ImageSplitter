@@ -6,19 +6,22 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.graphics.drawable.GradientDrawable;
+import android.graphics.Shader;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -51,10 +54,12 @@ public final class MainActivity extends Activity {
     private int parts = 3, output = SplitEngine.PX_1080, custom = 1500;
     private int sourceWidth, sourceHeight;
     private Uri source;
+    private String sourceName = "";
     private Bitmap preview;
     private List<Uri> exports = new ArrayList<>();
     private List<int[]> exportDimensions = new ArrayList<>();
     private String language = "en";
+    private android.graphics.Typeface kalam;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -110,12 +115,23 @@ public final class MainActivity extends Activity {
     }
 
     private int dp(float n) { return Math.round(n * getResources().getDisplayMetrics().density); }
-    private GradientDrawable shape(int color, int border, int radius) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color);
-        d.setCornerRadius(dp(radius));
-        d.setStroke(dp(1), border);
-        return d;
+    private android.graphics.Typeface appTypeface() {
+        if (kalam == null) {
+            try { kalam = getResources().getFont(R.font.kalam_regular); }
+            catch (Exception ignored) { kalam = android.graphics.Typeface.create("casual", android.graphics.Typeface.NORMAL); }
+        }
+        return kalam;
+    }
+    private Drawable shape(int color, int border, int radius) {
+        return new SketchFrameDrawable(color, border, dp(radius));
+    }
+
+    private int accentWash() {
+        float amount = dark ? .22f : .13f;
+        int r = Math.round(Color.red(background) * (1 - amount) + Color.red(accent) * amount);
+        int g = Math.round(Color.green(background) * (1 - amount) + Color.green(accent) * amount);
+        int b = Math.round(Color.blue(background) * (1 - amount) + Color.blue(accent) * amount);
+        return Color.rgb(r, g, b);
     }
 
     private TextView label(String s, int size, boolean bold, int color) {
@@ -124,7 +140,7 @@ public final class MainActivity extends Activity {
         t.setTextColor(color);
         t.setTextSize(size);
         t.setGravity(Gravity.CENTER_VERTICAL);
-        t.setTypeface(android.graphics.Typeface.create("casual", bold ? 1 : 0));
+        t.setTypeface(appTypeface(), bold ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
         return t;
     }
 
@@ -134,6 +150,31 @@ public final class MainActivity extends Activity {
         t.setMinHeight(dp(54));
         t.setPadding(dp(10), dp(8), dp(10), dp(8));
         t.setBackground(shape(selected ? accent : surface, selected ? accent : line, 15));
+        t.setOnTouchListener((view, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                view.animate().scaleX(.98f).scaleY(.98f).setDuration(70).start();
+            } else if (event.getAction() == MotionEvent.ACTION_UP
+                    || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                view.animate().scaleX(1f).scaleY(1f).setDuration(90).start();
+            }
+            return false;
+        });
+        t.setOnClickListener(v -> action.run());
+        return t;
+    }
+
+    private TextView optionButton(String title, boolean selected, Runnable action) {
+        TextView t = label((selected ? "✓  " : "") + title, 17, selected, text);
+        t.setGravity(Gravity.CENTER);
+        t.setMinHeight(dp(54));
+        t.setPadding(dp(10), dp(8), dp(10), dp(8));
+        t.setBackground(shape(selected ? accentWash() : surface, selected ? accent : line, 15));
+        t.setOnTouchListener((view, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) view.animate().scaleX(.98f).scaleY(.98f).setDuration(70).start();
+            else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL)
+                view.animate().scaleX(1f).scaleY(1f).setDuration(90).start();
+            return false;
+        });
         t.setOnClickListener(v -> action.run());
         return t;
     }
@@ -194,11 +235,13 @@ private void pick() {
             if (preview != null && preview != sampled) preview.recycle();
             preview = sampled;
             source = selected;
+            sourceName = displayName(selected);
             sourceWidth = size[0];
             sourceHeight = size[1];
             if (showHome) home(); else showSketch(sketchMode);
         } catch (Exception e) {
             source = null;
+            sourceName = "";
             sourceWidth = sourceHeight = 0;
             if (showHome) home(); else showSketch(sketchMode);
             toast(tr("The selected image is missing or unsupported",
@@ -207,7 +250,19 @@ private void pick() {
         }
     }
 
-    private void askCustom() { sketchInput(tr("Longest side in pixels (100–8000)", "الضلع الأطول بالبكسل (100–8000)", "Lado largo en píxeles (100–8000)"), "100–8000 px", String.valueOf(custom), true, value -> { try { int n=Integer.parseInt(value); if(n<100||n>8000) throw new NumberFormatException(); custom=n; output=-1; home(); } catch(NumberFormatException e) { toast("100–8000 px"); } }); }
+    private String displayName(Uri uri) {
+        try (android.database.Cursor cursor = getContentResolver().query(uri,
+                new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                String value = cursor.getString(0);
+                if (value != null && !value.trim().isEmpty()) return value.trim();
+            }
+        } catch (Exception ignored) {}
+        String tail = uri.getLastPathSegment();
+        return tail == null || tail.isEmpty() ? tr("Selected image", "الصورة المختارة", "Imagen seleccionada") : tail;
+    }
+
+    private void askCustom() { sketchInput(tr("Custom longest side", "الضلع الأطول المخصص", "Lado largo personalizado"), "64–12000 px", String.valueOf(custom), true, value -> { try { int n=Integer.parseInt(value); if(n<64||n>12000) throw new NumberFormatException(); if(sourceWidth>0&&sourceHeight>0){for(int i=0;i<parts;i++){int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,n);if((long)d[0]*d[1]>48_000_000L){sketchDialog(tr("Size is too large","المقاس كبير جدًا","El tamaño es demasiado grande"),tr("Choose a smaller value to avoid running out of memory.","اختر قيمة أصغر لتجنب نفاد الذاكرة.","Elige un valor menor para evitar agotar la memoria."),new String[]{tr("OK","حسنًا","Aceptar")},ignored->{});return;}}} custom=n; output=-1; home(); } catch(NumberFormatException e) { toast("64–12000 px"); } }); }
 
     private void export() {
         if (source == null) { toast(tr("Choose an image first", "اختر صورة أولًا",
@@ -398,14 +453,25 @@ private void settings() { showSketch(1); }
 
 private void help() { sketchDialog(tr("How to print", "طريقة الطباعة", "Cómo imprimir"), tr("Pick a photo, choose the direction and number of parts, then export. Print each PNG at the same scale and join the numbered edges. Accent-colored ticks mark matching joins when enabled in Settings.", "اختر الصورة والاتجاه وعدد الأجزاء، ثم صدّرها. اطبع كل جزء بالمقياس نفسه واجمع الحواف حسب ترتيب الأرقام. علامات بلون التطبيق تساعد في المحاذاة ويمكن إيقافها من الإعدادات.", "Elige una imagen, la dirección y las partes; exporta. Imprime cada PNG a la misma escala y une los bordes numerados."), new String[]{tr("OK", "حسنًا", "Aceptar")}, index -> {}); }
 
-    private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_LONG).show(); }
+    private void toast(String value) {
+        Toast toast=new Toast(this);
+        TextView message=label(value,16,true,text);
+        message.setGravity(Gravity.CENTER_VERTICAL);
+        message.setPadding(dp(18),dp(13),dp(18),dp(13));
+        message.setBackground(shape(surface,0xFFD64545,16));
+        toast.setView(message);
+        toast.setDuration(Toast.LENGTH_LONG);
+        toast.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL,0,dp(34));
+        toast.show();
+    }
 
     private void showLanguagePicker() {
         String[] labels={"العربية","English","Español"};
         String[] codes={"ar","en","es"};
+        int selected=language.equals("ar")?0:language.equals("es")?2:1;
         sketchDialog(tr("Choose Language","اختر اللغة","Elegir idioma"),
                 tr("The interface updates immediately","تتحدث الواجهة فورًا","La interfaz se actualiza al instante"),
-                labels,index->{language=codes[index];prefs.edit().putString("language",language).apply();settings();});
+                labels,selected,index->{language=codes[index];prefs.edit().putString("language",language).apply();settings();});
     }
 
     private void resetSettings() {
@@ -478,8 +544,8 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         LinearLayout.LayoutParams action=new LinearLayout.LayoutParams(0,dp(55),1);action.setMargins(dp(7),0,0,0);
         actions.addView(cancel,action);actions.addView(apply,action);box.addView(actions);
         dialog.setOnCancelListener(d->{accent=original;settings();});
-        dialog.setContentView(box);dialog.show();
-        if(dialog.getWindow()!=null){dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);dialog.getWindow().setLayout(getResources().getDisplayMetrics().widthPixels-dp(36),-2);}
+        dialog.setContentView(box);
+        presentSketchDialog(dialog,box);
     }
 
     private final class PreviewView extends View {
@@ -535,6 +601,15 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             paint.setTextSize(dp(18));
             canvas.drawText(String.format(Locale.US, "#%06X", accent & 0xFFFFFF),
                     cx, cy + dp(6), paint);
+            float[] hsv=new float[3];Color.colorToHSV(accent,hsv);
+            double angle=Math.toRadians(hsv[0]);
+            float cursorRadius=radius*.8f*Math.max(.3f,hsv[1]);
+            float cursorX=cx+(float)Math.cos(angle)*cursorRadius;
+            float cursorY=cy+(float)Math.sin(angle)*cursorRadius;
+            paint.setStyle(Paint.Style.FILL);paint.setColor(accent);canvas.drawCircle(cursorX,cursorY,dp(7),paint);
+            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(2));paint.setColor(Color.WHITE);canvas.drawCircle(cursorX,cursorY,dp(8),paint);
+            paint.setColor(line);paint.setStrokeWidth(dp(.8f));canvas.drawCircle(cursorX,cursorY,dp(10),paint);
+            paint.setStyle(Paint.Style.FILL);
         }
         @Override public boolean onTouchEvent(android.view.MotionEvent event) {
             if (event.getAction() != android.view.MotionEvent.ACTION_DOWN &&
@@ -580,9 +655,8 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
     private final class SketchScreen extends View {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final java.util.ArrayList<Zone> zones = new java.util.ArrayList<>();
-        private final android.graphics.Typeface handwriting =
-                android.graphics.Typeface.create("casual", android.graphics.Typeface.NORMAL);
-        private final Bitmap brand = BitmapFactory.decodeResource(getResources(), R.drawable.brand_reference);
+        private final android.graphics.Typeface handwriting = appTypeface();
+        private final Bitmap paperTile;
         private final long start = android.os.SystemClock.uptimeMillis();
         private final int contentHeight;
         private final Handler handler = new Handler(Looper.getMainLooper());
@@ -601,6 +675,14 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         SketchScreen(int contentHeight) {
             super(MainActivity.this);
             this.contentHeight = contentHeight;
+            int tile = Math.max(8, dp(7));
+            paperTile = Bitmap.createBitmap(tile, tile, Bitmap.Config.ARGB_8888);
+            Canvas texture = new Canvas(paperTile);
+            Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG);
+            dot.setColor(dark ? 0x143D566A : 0x122A2B2E);
+            texture.drawCircle(tile * .25f, tile * .25f, Math.max(.7f, dp(.28f)), dot);
+            dot.setColor(dark ? 0x0B9DB0BE : 0x0C8C775F);
+            texture.drawCircle(tile * .74f, tile * .72f, Math.max(.55f, dp(.22f)), dot);
             setContentDescription("Image Splitter");
             setFocusable(true);
         }
@@ -616,6 +698,9 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             sy = sx;
             zones.clear();
             actual.drawColor(background);
+            p.setShader(new BitmapShader(paperTile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT));
+            actual.drawRect(0, 0, getWidth(), getHeight(), p);
+            p.setShader(null);
             actual.save();
             actual.scale(sx, sy);
             if (sketchMode == 0) homeArt(actual);
@@ -689,11 +774,29 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         }
         private void buttonArt(Canvas c, String value, float l, float t, float r, float b,
                                boolean active, Runnable click) {
-            fill(c, l, t, r, b, 14, active ? accent : paper());
-            outline(c, l, t, r, b, 14, active ? accent : ink());
+            float inset = isPressed(l,t,r,b) ? 2.2f : 0f;
+            fill(c, l+inset, t+inset, r-inset, b-inset, 14, active ? accent : paper());
+            outline(c, l+inset, t+inset, r-inset, b-inset, 14, active ? accent : ink());
             txt(c, value, (l+r)/2f, (t+b)/2f + 8, r-l-15, 23,
                     active ? Color.WHITE : ink());
             hit(l,t,r,b,click);
+        }
+        private void selectArt(Canvas c, String value, float l, float t, float r, float b,
+                               boolean selected, Runnable click) {
+            float inset = isPressed(l,t,r,b) ? 2.2f : 0f;
+            fill(c,l+inset,t+inset,r-inset,b-inset,14,selected?wash():(dark?0xFF202D37:0xFFF2F0EA));
+            outline(c,l+inset,t+inset,r-inset,b-inset,14,selected?accent:alpha(ink(),170));
+            txt(c,value,(l+r)/2f,(t+b)/2f+8,r-l-15,23,ink());
+            if(selected){
+                p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(.8f);p.setColor(alpha(accent,105));
+                c.drawRoundRect(l+3,t+3,r-3,b-3,11,11,p);p.setStyle(Paint.Style.FILL);
+            }
+            hit(l,t,r,b,click);
+        }
+        private boolean isPressed(float l,float t,float r,float b){
+            if(pressedZone==null)return false;
+            RectF q=pressedZone.rect;
+            return Math.abs(q.left-l)<.5f&&Math.abs(q.top-t)<.5f&&Math.abs(q.right-r)<.5f&&Math.abs(q.bottom-b)<.5f;
         }
         private void hit(float l,float t,float r,float b,Runnable action) {
             hit(l,t,r,b,action,null);
@@ -714,10 +817,21 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             c.restoreToCount(layer);
             c.restore();
         }
-        private void brand(Canvas c,float l,float t,float r,float b) {
-            if (brand == null) return;
-            p.setColor(Color.WHITE);
-            c.drawBitmap(brand, null, new RectF(l,t,r,b),p);
+        private void logo(Canvas c,float center,float top,float width,float height) {
+            float l=center-width/2f,r=center+width/2f,unit=height/3f;
+            p.setStyle(Paint.Style.FILL);p.setColor(background);
+            c.drawRoundRect(l+5,top,r-2,top+unit-3,8,8,p);
+            c.drawRoundRect(l,top+unit-1,r,top+unit*2-4,7,7,p);
+            c.drawRoundRect(l+3,top+unit*2-2,r+3,top+height,10,10,p);
+            outline(c,l+5,top,r-2,top+unit-3,8,ink());
+            outline(c,l,top+unit-1,r,top+unit*2-4,7,ink());
+            outline(c,l+3,top+unit*2-2,r+3,top+height,10,ink());
+        }
+        private void folder(Canvas c,float x,float y){
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.5f);p.setColor(ink());
+            Path path=new Path();path.moveTo(x-17,y-11);path.lineTo(x-4,y-11);path.lineTo(x+1,y-6);
+            path.lineTo(x+17,y-6);path.lineTo(x+14,y+13);path.lineTo(x-17,y+13);path.close();c.drawPath(path,p);
+            line(c,x-15,y-3,x+15,y-3,ink(),1.4f);p.setStyle(Paint.Style.FILL);
         }
         private void gear(Canvas c,float x,float y) {
             p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.4f);p.setColor(ink());
@@ -757,58 +871,61 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             group(c,0,()->{
                 buttonArt(c,"",22,12,76,66,false,MainActivity.this::settings);
                 gear(c,49,39);
-                buttonArt(c,"▤  "+tr("Projects","المشاريع","Proyectos"),
-                        90,12,630,66,false,MainActivity.this::projects);
+                buttonArt(c,"",90,12,144,66,false,MainActivity.this::projects);
+                folder(c,117,39);
                 buttonArt(c,"",644,12,698,66,false,MainActivity.this::help);
                 bulb(c,671,39);
-                brand(c,310,72,410,172);
-                txt(c,"Image Splitter",360,192,670,34,ink());
+                logo(c,360,70,90,68);
+                txt(c,"Image Splitter",360,177,670,36,ink());
                 txt(c,tr("Turn any image into a big print","حوّل أي صورة إلى طباعة كبيرة",
                         "Convierte cualquier imagen en una impresión grande"),
-                        360,226,660,23,muted);
+                        360,215,660,21,muted);
             });
             group(c,1,()->{
-                fill(c,22,255,698,510,25,wash());
-                outline(c,22,255,698,510,25,ink());
-                dashed(c,34,267,686,498);
+                fill(c,22,242,698,497,25,wash());
+                outline(c,22,242,698,497,25,ink());
+                dashed(c,34,254,686,485);
                 if(preview!=null) {
-                    RectF thumb=fitRect(preview,260,282,460,410);
+                    RectF thumb=fitRect(preview,52,278,306,458);
+                    fill(c,45,270,314,466,18,alpha(background,dark?120:165));
                     c.drawBitmap(preview,null,thumb,p);
                     outline(c,thumb.left,thumb.top,thumb.right,thumb.bottom,12,ink());
-                    txt(c,tr("Change image","تغيير الصورة","Cambiar imagen"),360,450,620,29,ink());
-                    txt(c,sourceWidth+" × "+sourceHeight+" px",360,482,625,21,muted);
+                    left(c,tr("Image selected","تم اختيار الصورة","Imagen seleccionada"),342,318,315,20,accent);
+                    left(c,sourceName,342,356,320,27,ink());
+                    left(c,sourceWidth+" × "+sourceHeight+" px",342,391,315,20,muted);
+                    selectArt(c,tr("Change image","تغيير الصورة","Cambiar imagen"),342,414,658,466,true,MainActivity.this::pick);
                 } else {
-                    pictureIcon(c,360,345);
+                    pictureIcon(c,360,332);
                     txt(c,tr("Select an Image","اختر صورة","Selecciona una imagen"),
-                            360,429,620,30,ink());
+                            360,416,620,30,ink());
                     txt(c,tr("Tap to choose from your gallery","اضغط للاختيار من المعرض",
-                            "Toca para elegir de tu galería"),360,468,625,22,muted);
+                            "Toca para elegir de tu galería"),360,455,625,22,muted);
                 }
-                hit(22,255,698,510,MainActivity.this::pick);
+                hit(22,242,698,497,MainActivity.this::pick);
             });
             group(c,2,()->{
-                box(c,22,535,698,850,22,paper());
+                box(c,22,522,698,837,22,paper());
                 left(c,tr("Split Direction","اتجاه التقسيم","Dirección de corte"),
-                        42,580,620,27,ink());
-                buttonArt(c,tr("☰  Horizontal","☰  أفقي","☰  Horizontal"),
-                        40,600,356,672,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
-                buttonArt(c,tr("◫  Vertical","◫  عمودي","◫  Vertical"),
-                        364,600,680,672,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
+                        42,567,620,27,ink());
+                selectArt(c,tr("▱  Horizontal","▱  أفقي","▱  Horizontal"),
+                        40,587,356,659,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
+                selectArt(c,tr("⟪  Vertical","⟪  عمودي","⟪  Vertical"),
+                        364,587,680,659,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
                 left(c,tr("Number of Parts","عدد الأجزاء","Número de partes"),
-                        42,726,380,24,ink());
+                        42,713,380,24,ink());
                 float knobX=45+(parts-2)*631f/18;
-                fill(c,knobX-20,738,knobX+20,776,10,accent);
-                Path pointer=new Path();pointer.moveTo(knobX-7,776);pointer.lineTo(knobX,785);
-                pointer.lineTo(knobX+7,776);pointer.close();p.setColor(accent);c.drawPath(pointer,p);
-                txt(c,String.valueOf(parts),knobX,765,35,23,Color.WHITE);
-                line(c,45,798,676,798,dark?0xFF566572:0xFFD2D5D6,4f);
-                line(c,45,798,knobX,798,accent,6f);
+                fill(c,knobX-20,725,knobX+20,763,10,accent);
+                Path pointer=new Path();pointer.moveTo(knobX-7,763);pointer.lineTo(knobX,772);
+                pointer.lineTo(knobX+7,763);pointer.close();p.setColor(accent);c.drawPath(pointer,p);
+                txt(c,String.valueOf(parts),knobX,752,35,23,Color.WHITE);
+                line(c,45,785,676,785,dark?0xFF566572:0xFFD2D5D6,4f);
+                line(c,45,785,knobX,785,accent,6f);
                 p.setColor(paper());p.setStyle(Paint.Style.FILL);
-                c.drawCircle(knobX,798,14,p);
+                c.drawCircle(knobX,785,14,p);
                 p.setColor(ink());p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.7f);
-                c.drawCircle(knobX,798,14,p);p.setStyle(Paint.Style.FILL);
-                left(c,"2",42,833,50,19,ink());txt(c,"20",665,833,50,19,ink());
-                hit(35,773,685,824,()->{});
+                c.drawCircle(knobX,785,14,p);p.setStyle(Paint.Style.FILL);
+                left(c,"2",42,820,50,19,ink());txt(c,"20",665,820,50,19,ink());
+                hit(35,760,685,811,()->{});
             });
             group(c,3,()->{
                 box(c,22,875,698,1050,22,paper());
@@ -822,7 +939,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                     float x=40+i*161f;
                     Runnable select=()->{ if(choice==3) askCustom(); else {output=values[choice];sizeTip=false;
                         haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();} };
-                    buttonArt(c,labels[i],x,942,x+151,1023,output==values[i],select);
+                    selectArt(c,labels[i],x,942,x+151,1023,output==values[i],select);
                     hit(x,942,x+151,1023,select,()->{sizeTipChoice=choice;sizeTip=true;invalidate();});
                 }
             });
@@ -912,61 +1029,85 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             }
         }
         private void chrome(Canvas c,String heading,Runnable back) {
-            buttonArt(c,"←",22,18,86,82,false,back);
+            buttonArt(c,tr("←","→","←"),22,18,86,82,false,back);
             txt(c,heading,360,66,520,36,ink());
-            line(c,25,108,695,108,ink(),1.5f);
+            logo(c,655,22,58,45);
+        }
+        private void divider(Canvas c,float y){
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1f);p.setColor(alpha(ink(),70));
+            p.setPathEffect(new android.graphics.DashPathEffect(new float[]{5,5},0));
+            c.drawLine(43,y,677,y,p);p.setPathEffect(null);p.setStyle(Paint.Style.FILL);
+        }
+        private void toggleArt(Canvas c,float l,float t,boolean on,Runnable action){
+            float r=l+76,b=t+42;
+            fill(c,l,t,r,b,22,on?accent:(dark?0xFF33414C:0xFFE3E0D8));
+            outline(c,l,t,r,b,22,ink());
+            p.setColor(on?Color.WHITE:paper());c.drawCircle(on?r-21:l+21,(t+b)/2,15,p);
+            outline(c,(on?r-36:l+6),t+6,(on?r-6:l+36),b-6,15,alpha(ink(),130));
+            hit(l-8,t-10,r+8,b+10,action);
         }
         private void settingsArt(Canvas c) {
             group(c,0,()->chrome(c,tr("Settings","الإعدادات","Ajustes"),MainActivity.this::home));
             group(c,1,()->{
-                box(c,22,135,698,630,22,paper());
-                left(c,tr("APPEARANCE","المظهر","APARIENCIA"),48,178,620,22,accent);
-                box(c,42,198,678,286,16,wash());
-                p.setColor(accent);c.drawCircle(82,242,22,p);outline(c,60,220,104,264,22,ink());
-                left(c,tr("Accent Color","لون التطبيق","Color de acento"),125,237,410,26,ink());
-                left(c,String.format(Locale.US,"#%06X",accent&0xFFFFFF),125,267,410,19,muted);
-                txt(c,"›",644,255,40,38,ink());hit(42,198,678,286,MainActivity.this::showColorPicker);
-                left(c,tr("Theme","السمة","Tema"),48,335,620,24,ink());
+                left(c,tr("APPEARANCE","المظهر","APARIENCIA"),28,135,650,21,muted);
+                box(c,22,150,698,475,22,paper());
+                txt(c,"◉",61,213,48,34,ink());
+                left(c,tr("Accent Color","لون التطبيق","Color de acento"),96,211,350,25,ink());
+                fill(c,568,178,622,226,10,accent);outline(c,568,178,622,226,10,alpha(ink(),135));
+                txt(c,"↶",657,215,36,31,ink());
+                hit(42,163,678,245,MainActivity.this::showColorPicker);
+                divider(c,255);
+                txt(c,"☼",61,315,48,34,ink());
+                left(c,tr("Theme","السمة","Tema"),96,313,280,25,ink());
                 String[] modes={"system","light","dark"};
                 String[] names={tr("System","النظام","Sistema"),tr("Light","فاتح","Claro"),tr("Dark","داكن","Oscuro")};
-                for(int i=0;i<3;i++){final int ix=i;float x=42+i*212;
-                    buttonArt(c,names[i],x,355,x+202,425,theme.equals(modes[i]),()->{
+                for(int i=0;i<3;i++){final int ix=i;float x=385+i*97;
+                    selectArt(c,names[i],x,278,x+89,337,theme.equals(modes[i]),()->{
                         theme=modes[ix];prefs.edit().putString("theme",theme).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});}
+                divider(c,356);
                 boolean animations=prefs.getBoolean("animations",true);
-                buttonArt(c,(animations?"✓  ":"○  ")+tr("Animations","الحركات","Animaciones"),42,452,350,518,animations,()->{
-                    prefs.edit().putBoolean("animations",!animations).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
-                boolean haptics=prefs.getBoolean("haptics",true);
-                buttonArt(c,(haptics?"✓  ":"○  ")+tr("Haptic Feedback","الاهتزاز اللمسي","Respuesta háptica"),370,452,678,518,haptics,()->{
-                    prefs.edit().putBoolean("haptics",!haptics).apply();if(!haptics)haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
+                txt(c,"✎",61,421,48,32,ink());
+                left(c,tr("Animations","الحركات","Animaciones"),96,419,400,25,ink());
+                toggleArt(c,588,386,animations,()->{prefs.edit().putBoolean("animations",!animations).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
             });
             group(c,2,()->{
-                box(c,22,655,698,825,22,paper());
-                left(c,tr("LANGUAGE","اللغة","IDIOMA"),48,698,620,22,accent);
+                left(c,tr("LANGUAGE","اللغة","IDIOMA"),28,523,650,21,muted);
+                box(c,22,538,698,642,22,paper());
+                txt(c,"文",61,601,48,29,ink());
                 String selected=language.equals("ar")?"العربية":language.equals("es")?"Español":"English";
-                buttonArt(c,selected+"   ›",42,725,678,800,false,MainActivity.this::showLanguagePicker);
+                left(c,selected,96,600,330,25,ink());
+                selectArt(c,selected+"  ▾",520,560,674,620,false,MainActivity.this::showLanguagePicker);
             });
             group(c,3,()->{
-                box(c,22,850,698,1025,22,paper());
-                left(c,tr("PRINTING / ASSEMBLY","الطباعة / التجميع","IMPRESIÓN / MONTAJE"),48,894,620,22,accent);
+                left(c,tr("PRINTING / ASSEMBLY","الطباعة / التجميع","IMPRESIÓN / MONTAJE"),28,690,650,21,muted);
+                box(c,22,705,698,809,22,paper());
                 boolean hints=prefs.getBoolean("hints",true);
-                buttonArt(c,(hints?"✓  ":"○  ")+tr("Show Joining / Pasting Guidance",
-                        "إظهار تلميحات الربط واللصق","Mostrar guías de unión"),42,920,678,997,hints,()->{
-                    prefs.edit().putBoolean("hints",!hints).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
+                txt(c,"▱",61,768,48,32,ink());
+                left(c,tr("Show Joining / Pasting Guidance","إظهار تلميحات الربط واللصق",
+                        "Mostrar guías de unión"),96,767,440,24,ink());
+                toggleArt(c,588,736,hints,()->{prefs.edit().putBoolean("hints",!hints).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
             });
             group(c,4,()->{
-                box(c,22,1050,698,1325,22,paper());
-                left(c,tr("GENERAL","عام","GENERAL"),48,1094,620,22,accent);
-                buttonArt(c,tr("Reset Settings","إعادة ضبط الإعدادات","Restablecer ajustes"),42,1120,678,1192,false,MainActivity.this::resetSettings);
-                buttonArt(c,tr("About Image Splitter","حول Image Splitter","Acerca de Image Splitter"),42,1210,678,1282,false,MainActivity.this::showAbout);
-                txt(c,tr("Offline-first · No analytics · Images stay on-device",
-                        "يعمل دون اتصال · بلا تحليلات · صورك تبقى على الجهاز",
-                        "Sin conexión · Sin analíticas · Imágenes en el dispositivo"),360,1380,650,19,muted);
+                left(c,tr("GENERAL","عام","GENERAL"),28,857,650,21,muted);
+                box(c,22,872,698,1179,22,paper());
+                boolean haptics=prefs.getBoolean("haptics",true);
+                txt(c,"♧",61,932,48,31,ink());
+                left(c,tr("Haptic Feedback","الاهتزاز اللمسي","Respuesta háptica"),96,931,420,25,ink());
+                toggleArt(c,588,900,haptics,()->{prefs.edit().putBoolean("haptics",!haptics).apply();if(!haptics)haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
+                divider(c,972);
+                txt(c,"↶",61,1032,48,32,ink());
+                left(c,tr("Reset Settings","إعادة ضبط الإعدادات","Restablecer ajustes"),96,1031,360,25,ink());
+                selectArt(c,tr("Reset","إعادة","Restablecer"),505,994,674,1058,false,MainActivity.this::resetSettings);
+                divider(c,1073);
+                txt(c,"?",61,1137,48,31,ink());
+                left(c,tr("About","حول التطبيق","Acerca de"),96,1135,400,25,ink());
+                txt(c,"v1.0",640,1135,75,20,muted);hit(42,1080,678,1168,MainActivity.this::showAbout);
+                txt(c,tr("Offline-first · No analytics · Images stay on-device","يعمل دون اتصال · بلا تحليلات · صورك تبقى على الجهاز",
+                        "Sin conexión · Sin analíticas · Imágenes en el dispositivo"),360,1245,650,19,muted);
             });
         }
         private void projectsArt(Canvas c) {
             group(c,0,()->chrome(c,tr("Projects","المشاريع","Proyectos"),MainActivity.this::home));
-            group(c,1,()->buttonArt(c,"+  "+tr("New project","مشروع جديد","Nuevo proyecto"),
-                    22,141,698,229,true,()->newProject(false)));
             JSONArray projects=storedProjects();
             int pages=Math.max(1,(projects.length()+4)/5);
             if(listPage>=pages)listPage=pages-1;
@@ -975,7 +1116,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 JSONObject project=projects.optJSONObject(ix);
                 if(project==null)break;
                 final int selected=ix;
-                final float y=254+i*184;
+                final float y=145+i*184;
                 group(c,i+2,()->{
                     box(c,22,y,698,y+161,20,paper());
                     left(c,project.optString("name"),48,y+67,560,30,ink());
@@ -989,18 +1130,17 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             pager(c,listPage,pages,()->{listPage--;invalidate();},
                     ()->{listPage++;invalidate();});
             if(projects.length()==0){
-                pictureIcon(c,360,400);
-                txt(c,tr("No projects yet","لا توجد مشاريع بعد","Aún no hay proyectos"),360,500,635,30,ink());
-                txt(c,tr("Create a project to keep each print job organized",
-                        "أنشئ مشروعًا لترتيب كل عملية طباعة",
-                        "Crea un proyecto para organizar cada impresión"),360,545,635,22,muted);
+                folder(c,360,330);
+                txt(c,tr("No projects yet","لا توجد مشاريع بعد","Aún no hay proyectos"),360,400,635,30,muted);
             }
+            group(c,7,()->buttonArt(c,"＋  "+tr("Create Project","إنشاء مشروع","Crear proyecto"),
+                    22,1310,698,1394,true,()->newProject(false)));
         }
         private void pager(Canvas c,int index,int pages,Runnable prev,Runnable next) {
             if(pages<=1)return;
-            buttonArt(c,"‹",180,1275,270,1350,false,prev);
-            txt(c,(index+1)+" / "+pages,360,1322,160,24,ink());
-            buttonArt(c,"›",450,1275,540,1350,false,next);
+            buttonArt(c,"‹",180,1205,270,1275,false,prev);
+            txt(c,(index+1)+" / "+pages,360,1248,160,24,ink());
+            buttonArt(c,"›",450,1205,540,1275,false,next);
         }
         private void detailArt(Canvas c) {
             JSONObject project=storedProjects().optJSONObject(detailIndex);
@@ -1099,10 +1239,13 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         private void drawPartThumb(Canvas c,int index,float l,float t,float r,float b) {
             if(preview==null){pictureIcon(c,(l+r)/2,(t+b)/2);return;}
             Rect src=SplitEngine.partRect(preview.getWidth(),preview.getHeight(),horizontal,parts,index);
-            RectF dst=new RectF(l,t,r,b);
+            float scale=Math.min((r-l)/src.width(),(b-t)/src.height());
+            float width=src.width()*scale,height=src.height()*scale;
+            RectF dst=new RectF((l+r-width)/2f,(t+b-height)/2f,(l+r+width)/2f,(t+b+height)/2f);
             c.drawBitmap(preview,src,dst,p);outline(c,l,t,r,b,12,ink());
-            p.setColor(accent);c.drawCircle(l+18,t+18,15,p);
-            txt(c,String.valueOf(index+1),l+18,t+24,24,16,Color.WHITE);
+            outline(c,dst.left,dst.top,dst.right,dst.bottom,10,ink());
+            p.setColor(accent);c.drawCircle(dst.left+18,dst.top+18,15,p);
+            txt(c,String.valueOf(index+1),dst.left+18,dst.top+24,24,16,Color.WHITE);
         }
         @Override public boolean onTouchEvent(MotionEvent event) {
             float x=event.getX()/sx, y=event.getY()/sy;
@@ -1144,32 +1287,45 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
     }
 
     private android.app.Dialog sketchDialog(String heading, String message, String[] options, java.util.function.IntConsumer selected) {
+        return sketchDialog(heading,message,options,-1,selected);
+    }
+
+    private android.app.Dialog sketchDialog(String heading, String message, String[] options,
+                                             int selectedIndex, java.util.function.IntConsumer selected) {
         android.app.Dialog dialog = new android.app.Dialog(this);
         LinearLayout box = column();
         box.setPadding(dp(20), dp(18), dp(20), dp(18));
         box.setBackground(shape(surface, line, 22));
         box.setLayoutDirection(language.equals("ar") ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
+        LinearLayout header=row();
         TextView title = label(heading, 22, true, text);
-        box.addView(title);
+        header.addView(title,new LinearLayout.LayoutParams(0,dp(44),1));
+        TextView close=label("×",30,false,text);close.setGravity(Gravity.CENTER);close.setOnClickListener(v->dialog.dismiss());
+        header.addView(close,new LinearLayout.LayoutParams(dp(44),dp(44)));
+        box.addView(header);
         if (message != null) {
             gap(box, 10);
             TextView info = label(message, 16, false, muted);
             box.addView(info);
         }
-        LinearLayout optionBox=column();
+        LinearLayout optionBox=options.length==2?row():column();
         for (int i = 0; i < options.length; i++) {
             final int index = i;
-            optionBox.addView(button(options[i], false, () -> { dialog.dismiss(); selected.accept(index); }));
-            if(i<options.length-1)gap(optionBox,8);
+            TextView choice=optionButton(options[i],i==selectedIndex,() -> { dialog.dismiss(); selected.accept(index); });
+            if(options.length==2){
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(56),1);
+                if(i==0)p.setMargins(0,0,dp(8),0);optionBox.addView(choice,p);
+            } else {
+                optionBox.addView(choice,new LinearLayout.LayoutParams(-1,dp(56)));
+                if(i<options.length-1)gap(optionBox,8);
+            }
         }
         ScrollView optionScroll=new ScrollView(this);
         optionScroll.setVerticalScrollBarEnabled(false);optionScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         optionScroll.addView(optionBox);
-        box.addView(optionScroll,new LinearLayout.LayoutParams(-1,dp(Math.min(430,Math.max(64,options.length*64)))));
+        box.addView(optionScroll,new LinearLayout.LayoutParams(-1,dp(options.length==2?64:Math.min(430,Math.max(64,options.length*64)))));
         dialog.setContentView(box);
-        dialog.show();
-        if(dialog.getWindow()!=null){dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
-            dialog.getWindow().setLayout(getResources().getDisplayMetrics().widthPixels - dp(44), -2);}
+        presentSketchDialog(dialog,box);
         return dialog;
     }
 
@@ -1180,7 +1336,10 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         box.setPadding(dp(20), dp(18), dp(20), dp(18));
         box.setBackground(shape(surface, line, 22));
         box.setLayoutDirection(language.equals("ar") ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
-        box.addView(label(heading, 22, true, text));
+        LinearLayout header=row();
+        header.addView(label(heading,22,true,text),new LinearLayout.LayoutParams(0,dp(44),1));
+        TextView close=label("×",30,false,text);close.setGravity(Gravity.CENTER);close.setOnClickListener(v->dialog.dismiss());
+        header.addView(close,new LinearLayout.LayoutParams(dp(44),dp(44)));box.addView(header);
         gap(box, 14);
         EditText input = new EditText(this);
         input.setSingleLine(true);
@@ -1190,7 +1349,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         input.setHintTextColor(muted);
         input.setTextSize(19);
         input.setPadding(dp(14), 0, dp(14), 0);
-        input.setBackground(shape(background, line, 12));
+        input.setBackground(shape(background, accent, 12));
         input.setInputType(numeric ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT);
         box.addView(input, new LinearLayout.LayoutParams(-1, dp(55)));
         gap(box, 16);
@@ -1204,9 +1363,43 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         actions.addView(confirm, new LinearLayout.LayoutParams(0, dp(55), 1));
         box.addView(actions);
         dialog.setContentView(box);
-        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        presentSketchDialog(dialog,box);
+        input.requestFocus();
+    }
+
+    private void presentSketchDialog(Dialog dialog, View card) {
         dialog.show();
-        dialog.getWindow().setLayout(getResources().getDisplayMetrics().widthPixels - dp(44), -2);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            android.view.WindowManager.LayoutParams lp=dialog.getWindow().getAttributes();
+            lp.dimAmount=.42f;
+            dialog.getWindow().setAttributes(lp);
+            int width=Math.min(getResources().getDisplayMetrics().widthPixels-dp(36),dp(440));
+            dialog.getWindow().setLayout(width,ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        if(prefs.getBoolean("animations",true)){
+            card.setAlpha(0f);card.setScaleX(.96f);card.setScaleY(.96f);card.setTranslationY(dp(12));
+            card.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0).setDuration(180).start();
+        }
+    }
+
+    private final class SketchFrameDrawable extends Drawable {
+        private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int fillColor,borderColor;
+        private final float radius;
+        SketchFrameDrawable(int fillColor,int borderColor,float radius){this.fillColor=fillColor;this.borderColor=borderColor;this.radius=radius;}
+        @Override public void draw(Canvas canvas){
+            Rect bounds=getBounds();RectF outer=new RectF(bounds.left+.8f,bounds.top+.8f,bounds.right-.8f,bounds.bottom-.8f);
+            paint.setStyle(Paint.Style.FILL);paint.setColor(fillColor);canvas.drawRoundRect(outer,radius,radius,paint);
+            paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1.15f));paint.setColor(borderColor);canvas.drawRoundRect(outer,radius,radius,paint);
+            paint.setStrokeWidth(Math.max(1f,dp(.38f)));paint.setColor((borderColor&0x00FFFFFF)|0x55000000);
+            RectF echo=new RectF(outer.left+dp(.7f),outer.top-dp(.35f),outer.right+dp(.25f),outer.bottom+dp(.55f));
+            canvas.drawRoundRect(echo,radius*.96f,radius*.96f,paint);
+        }
+        @Override public void setAlpha(int alpha){paint.setAlpha(alpha);}
+        @Override public void setColorFilter(android.graphics.ColorFilter filter){paint.setColorFilter(filter);}
+        @Override public int getOpacity(){return android.graphics.PixelFormat.TRANSLUCENT;}
     }
 
 }
