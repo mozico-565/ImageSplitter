@@ -3,7 +3,7 @@ plugins {
 }
 
 /*
- * ImageSplitter Lovable parity patch v3
+ * ImageSplitter Lovable parity patch v4
  *
  * What this build-time patch does:
  * 1) Fixes the home-screen glitch / disappearing lower area by using a stable
@@ -13,7 +13,381 @@ plugins {
  * 3) Updates the in-app logo + launcher icon to the approved Lovable style.
  * 4) Refines the long-press size info card.
  * 5) Slightly tunes border / divider / heading weight to match Lovable better.
+ * 6) Adapts vertical rhythm and text scale to narrow/tall phone screens.
+ * 7) Adds optional on-device ESRGAN AI enhancement (2x) after splitting.
+ * 8) Draws a real stack icon next to Split & Export.
  */
+
+
+// -----------------------------------------------------------------------------
+// Optional on-device AI enhancement (ESRGAN / TensorFlow Lite)
+// -----------------------------------------------------------------------------
+def appGradleFile = file('app/build.gradle')
+if (appGradleFile.exists()) {
+    String appGradle = appGradleFile.getText('UTF-8')
+
+    if (!appGradle.contains("org.tensorflow:tensorflow-lite:2.16.1")) {
+        appGradle = appGradle.replace(
+                "dependencies {\n    testImplementation 'junit:junit:4.13.2'",
+                "dependencies {\n    implementation 'org.tensorflow:tensorflow-lite:2.16.1'\n    testImplementation 'junit:junit:4.13.2'")
+    }
+
+    if (!appGradle.contains("noCompress += ['tflite']")) {
+        appGradle = appGradle.replace(
+'''    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}''',
+'''    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        noCompress += ['tflite']
+    }
+}''')
+    }
+
+    appGradleFile.write(appGradle, 'UTF-8')
+}
+
+def aiSourceFile = file('app/src/main/java/com/imagesplitter/app/AiUpscaler.java')
+aiSourceFile.parentFile.mkdirs()
+aiSourceFile.write('''package com.imagesplitter.app;
+
+import android.content.ContentResolver;
+import android.content.res.AssetFileDescriptor;
+import android.content.res.AssetManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
+
+import org.tensorflow.lite.Interpreter;
+
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Optional local super-resolution.
+ *
+ * Uses the TensorFlow Lite ESRGAN model on-device. The model itself is x4,
+ * but ImageSplitter writes a safer x2 result to reduce RAM usage and export time
+ * on mid-range phones.
+ */
+public final class AiUpscaler implements AutoCloseable {
+    private static final String MODEL = "ESRGAN.tflite";
+    private static final int FINAL_SCALE = 2;
+    private static final long MAX_INPUT_PIXELS = 2_500_000L;
+
+    private final Interpreter interpreter;
+    private final int inputWidth;
+    private final int inputHeight;
+    private final int modelScale;
+
+    public AiUpscaler(AssetManager assets) throws Exception {
+        Interpreter.Options options = new Interpreter.Options();
+        options.setNumThreads(Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())));
+
+        interpreter = new Interpreter(loadModel(assets), options);
+
+        int[] inShape = interpreter.getInputTensor(0).shape();
+        int[] outShape = interpreter.getOutputTensor(0).shape();
+
+        if (inShape.length != 4 || outShape.length != 4) {
+            throw new IllegalStateException("Unsupported ESRGAN tensor shape");
+        }
+
+        inputHeight = inShape[1];
+        inputWidth = inShape[2];
+
+        if (inputHeight <= 0 || inputWidth <= 0) {
+            throw new IllegalStateException("Invalid ESRGAN input size");
+        }
+
+        int sy = outShape[1] / inputHeight;
+        int sx = outShape[2] / inputWidth;
+        modelScale = Math.min(sx, sy);
+
+        if (modelScale < FINAL_SCALE) {
+            throw new IllegalStateException("ESRGAN output scale is too small");
+        }
+    }
+
+    private static MappedByteBuffer loadModel(AssetManager assets) throws Exception {
+        AssetFileDescriptor fd = assets.openFd(MODEL);
+        try (FileInputStream input = new FileInputStream(fd.getFileDescriptor());
+             FileChannel channel = input.getChannel()) {
+            return channel.map(
+                    FileChannel.MapMode.READ_ONLY,
+                    fd.getStartOffset(),
+                    fd.getDeclaredLength());
+        } finally {
+            fd.close();
+        }
+    }
+
+    public static void enhanceInPlace(
+            ContentResolver resolver,
+            AssetManager assets,
+            List<Uri> images) throws Exception {
+
+        if (images == null || images.isEmpty()) return;
+
+        try (AiUpscaler upscaler = new AiUpscaler(assets)) {
+            for (Uri uri : images) {
+                Bitmap source;
+                try (InputStream input = resolver.openInputStream(uri)) {
+                    source = BitmapFactory.decodeStream(input);
+                }
+
+                if (source == null) {
+                    throw new IllegalStateException("Unable to decode exported image");
+                }
+
+                Bitmap enhanced = null;
+                try {
+                    enhanced = upscaler.enhance(source);
+                    try (OutputStream output = resolver.openOutputStream(uri, "wt")) {
+                        if (output == null || !enhanced.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                            throw new IllegalStateException("Unable to save AI enhanced image");
+                        }
+                    }
+                } finally {
+                    if (enhanced != null && enhanced != source && !enhanced.isRecycled()) {
+                        enhanced.recycle();
+                    }
+                    if (!source.isRecycled()) source.recycle();
+                }
+            }
+        }
+    }
+
+    public Bitmap enhance(Bitmap bitmap) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+
+        if ((long) width * height > MAX_INPUT_PIXELS) {
+            throw new IllegalArgumentException(
+                    "Image part is too large for safe on-device AI enhancement");
+        }
+
+        final int outputWidth = width * FINAL_SCALE;
+        final int outputHeight = height * FINAL_SCALE;
+
+        int[] sourcePixels = new int[width * height];
+        bitmap.getPixels(sourcePixels, 0, width, 0, 0, width, height);
+
+        int[] outputPixels = new int[outputWidth * outputHeight];
+
+        float[][][][] input =
+                new float[1][inputHeight][inputWidth][3];
+
+        int modelOutH = inputHeight * modelScale;
+        int modelOutW = inputWidth * modelScale;
+        float[][][][] output =
+                new float[1][modelOutH][modelOutW][3];
+
+        int overlap = Math.max(2, Math.min(inputWidth, inputHeight) / 12);
+        int stepX = Math.max(1, inputWidth - overlap * 2);
+        int stepY = Math.max(1, inputHeight - overlap * 2);
+
+        List<Integer> xs = tileStarts(width, inputWidth, stepX);
+        List<Integer> ys = tileStarts(height, inputHeight, stepY);
+
+        for (int startY : ys) {
+            for (int startX : xs) {
+                fillInput(
+                        input,
+                        sourcePixels,
+                        width,
+                        height,
+                        startX,
+                        startY);
+
+                interpreter.run(input, output);
+
+                int leftCrop = startX == 0 ? 0 : overlap;
+                int topCrop = startY == 0 ? 0 : overlap;
+                int rightCrop =
+                        startX + inputWidth >= width ? 0 : overlap;
+                int bottomCrop =
+                        startY + inputHeight >= height ? 0 : overlap;
+
+                int maxLocalX = Math.min(inputWidth - rightCrop, width - startX);
+                int maxLocalY = Math.min(inputHeight - bottomCrop, height - startY);
+
+                for (int localY = topCrop; localY < maxLocalY; localY++) {
+                    int srcImageY = startY + localY;
+                    for (int localX = leftCrop; localX < maxLocalX; localX++) {
+                        int srcImageX = startX + localX;
+
+                        int alpha =
+                                (sourcePixels[srcImageY * width + srcImageX] >>> 24) & 0xFF;
+
+                        for (int oy = 0; oy < FINAL_SCALE; oy++) {
+                            int destY = srcImageY * FINAL_SCALE + oy;
+                            int modelY =
+                                    localY * modelScale
+                                            + (oy * modelScale / FINAL_SCALE);
+
+                            for (int ox = 0; ox < FINAL_SCALE; ox++) {
+                                int destX = srcImageX * FINAL_SCALE + ox;
+                                int modelX =
+                                        localX * modelScale
+                                                + (ox * modelScale / FINAL_SCALE);
+
+                                int block =
+                                        Math.max(1, modelScale / FINAL_SCALE);
+
+                                float rr = 0f;
+                                float gg = 0f;
+                                float bb = 0f;
+                                int samples = 0;
+
+                                for (int by = 0; by < block; by++) {
+                                    int yy = Math.min(modelOutH - 1, modelY + by);
+                                    for (int bx = 0; bx < block; bx++) {
+                                        int xx = Math.min(modelOutW - 1, modelX + bx);
+                                        rr += output[0][yy][xx][0];
+                                        gg += output[0][yy][xx][1];
+                                        bb += output[0][yy][xx][2];
+                                        samples++;
+                                    }
+                                }
+
+                                int r = clamp(Math.round(rr / samples));
+                                int g = clamp(Math.round(gg / samples));
+                                int b = clamp(Math.round(bb / samples));
+
+                                outputPixels[destY * outputWidth + destX] =
+                                        (alpha << 24) | (r << 16) | (g << 8) | b;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Bitmap result =
+                Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888);
+        result.setPixels(
+                outputPixels,
+                0,
+                outputWidth,
+                0,
+                0,
+                outputWidth,
+                outputHeight);
+
+        return result;
+    }
+
+    private static List<Integer> tileStarts(int size, int tile, int step) {
+        ArrayList<Integer> result = new ArrayList<>();
+
+        if (size <= tile) {
+            result.add(0);
+            return result;
+        }
+
+        int current = 0;
+        while (current + tile < size) {
+            result.add(current);
+            current += step;
+        }
+
+        int last = Math.max(0, size - tile);
+        if (result.isEmpty() || result.get(result.size() - 1) != last) {
+            result.add(last);
+        }
+
+        return result;
+    }
+
+    private void fillInput(
+            float[][][][] input,
+            int[] pixels,
+            int width,
+            int height,
+            int startX,
+            int startY) {
+
+        for (int y = 0; y < inputHeight; y++) {
+            int sy = Math.min(height - 1, Math.max(0, startY + y));
+
+            for (int x = 0; x < inputWidth; x++) {
+                int sx = Math.min(width - 1, Math.max(0, startX + x));
+                int pixel = pixels[sy * width + sx];
+
+                input[0][y][x][0] = (pixel >> 16) & 0xFF;
+                input[0][y][x][1] = (pixel >> 8) & 0xFF;
+                input[0][y][x][2] = pixel & 0xFF;
+            }
+        }
+    }
+
+    private static int clamp(int value) {
+        return Math.max(0, Math.min(255, value));
+    }
+
+    @Override
+    public void close() {
+        interpreter.close();
+    }
+}
+''', 'UTF-8')
+
+def esrganModel = file('app/src/main/assets/ESRGAN.tflite')
+
+tasks.register('prepareEsrganModel') {
+    outputs.file(esrganModel)
+
+    doLast {
+        if (esrganModel.exists() && esrganModel.length() > 1_000_000L) {
+            println 'ESRGAN model already present.'
+            return
+        }
+
+        esrganModel.parentFile.mkdirs()
+
+        def temp = new File(esrganModel.parentFile, 'ESRGAN.tflite.part')
+        if (temp.exists()) temp.delete()
+
+        println 'Downloading TensorFlow Lite ESRGAN model...'
+
+        new URL('https://storage.googleapis.com/download.tensorflow.org/models/tflite/esrgan/ESRGAN.tflite')
+                .withInputStream { input ->
+                    temp.withOutputStream { output ->
+                        output << input
+                    }
+                }
+
+        if (temp.length() < 1_000_000L) {
+            temp.delete()
+            throw new GradleException('Downloaded ESRGAN model is unexpectedly small.')
+        }
+
+        if (esrganModel.exists()) esrganModel.delete()
+        if (!temp.renameTo(esrganModel)) {
+            esrganModel.bytes = temp.bytes
+            temp.delete()
+        }
+    }
+}
+
+gradle.projectsEvaluated {
+    project(':app').tasks.named('preBuild').configure {
+        dependsOn(rootProject.tasks.named('prepareEsrganModel'))
+    }
+}
+
 
 def sourceFile = file('app/src/main/java/com/imagesplitter/app/MainActivity.java')
 
@@ -25,7 +399,7 @@ if (sourceFile.exists()) {
         if (src.contains(oldText)) {
             src = src.replace(oldText, newText)
         } else if (!src.contains(marker)) {
-            throw new GradleException("ImageSplitter UI patch v3 could not find expected source block: ${marker}")
+            throw new GradleException("ImageSplitter UI patch v4 could not find expected source block: ${marker}")
         }
     }
 
@@ -159,215 +533,4 @@ if (sourceFile.exists()) {
     replaceOnce(
 '''        private void logo(Canvas c,float center,float top,float width,float height) {
             float l=center-width/2f,r=center+width/2f,unit=height/3f;
-            p.setStyle(Paint.Style.FILL);p.setColor(background);
-            c.drawRoundRect(l+5,top,r-2,top+unit-3,8,8,p);
-            c.drawRoundRect(l,top+unit-1,r,top+unit*2-4,7,7,p);
-            c.drawRoundRect(l+3,top+unit*2-2,r+3,top+height,10,10,p);
-            outline(c,l+5,top,r-2,top+unit-3,8,ink());
-            outline(c,l,top+unit-1,r,top+unit*2-4,7,ink());
-            outline(c,l+3,top+unit*2-2,r+3,top+height,10,ink());
-        }''',
-'''        private void logo(Canvas c,float center,float top,float width,float height) {
-            float topW = width * .72f;
-            float middleW = width * .90f;
-            float bottomW = width * .80f;
-            float itemH = height * .245f;
-            float gap = height * .075f;
-            float y1 = top;
-            float y2 = y1 + itemH + gap;
-            float y3 = y2 + itemH + gap;
-
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(Math.max(3.0f, width * .043f));
-            p.setStrokeCap(Paint.Cap.ROUND);
-            p.setStrokeJoin(Paint.Join.ROUND);
-            p.setColor(ink());
-
-            c.drawRoundRect(center - topW/2f, y1, center + topW/2f, y1 + itemH,
-                    itemH * .42f, itemH * .42f, p);
-            c.drawRoundRect(center - middleW/2f, y2, center + middleW/2f, y2 + itemH,
-                    itemH * .42f, itemH * .42f, p);
-            c.drawRoundRect(center - bottomW/2f, y3, center + bottomW/2f, y3 + itemH,
-                    itemH * .42f, itemH * .42f, p);
-
-            p.setStyle(Paint.Style.FILL);
-        }''',
-'float topW = width * .72f;'
-    )
-
-    replaceOnce(
-'''                selectArt(c,tr("▱  Horizontal","▱  أفقي","▱  Horizontal"),
-                        40,587,356,659,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
-                selectArt(c,tr("⟪  Vertical","⟪  عمودي","⟪  Vertical"),
-                        364,587,680,659,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});''',
-'''                splitDirectionArt(c,tr("Horizontal","أفقي","Horizontal"),
-                        40,587,356,659,horizontal,true,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
-                splitDirectionArt(c,tr("Vertical","عمودي","Vertical"),
-                        364,587,680,659,!horizontal,false,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});''',
-'splitDirectionArt(c,tr("Horizontal"'
-    )
-
-    // Lovable-style size hint card.
-    replaceOnce(
-'''        private void drawSizeTip(Canvas c) {
-            float anchor=40+sizeTipChoice*161f+75.5f;
-            Path notch=new Path();notch.moveTo(anchor-16,1072);notch.lineTo(anchor,1050);
-            notch.lineTo(anchor+16,1072);notch.close();p.setColor(wash());c.drawPath(notch,p);
-            box(c,42,1070,678,1348,22,wash());
-            String[] labels={tr("Original","الأصلي","Original"),"750 px","1080 px",
-                    tr("Custom","مخصص","Personalizado")};
-            txt(c,tr("Example (","مثال (","Ejemplo (")+labels[sizeTipChoice]+")",360,1110,590,24,ink());
-            if(sourceWidth<2||sourceHeight<2) {
-                txt(c,tr("Select an image to calculate real dimensions",
-                        "اختر صورة لحساب المقاسات الحقيقية",
-                        "Selecciona una imagen para calcular"),360,1210,570,24,muted);
-            } else {
-                int target=sizeTipChoice==0?0:sizeTipChoice==1?750:sizeTipChoice==2?1080:custom;
-                int totalW=horizontal?0:0,totalH=horizontal?0:0;
-                int firstW=0,firstH=0;
-                for(int i=0;i<parts;i++){
-                    int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,target);
-                    if(i==0){firstW=d[0];firstH=d[1];}
-                    if(horizontal){totalW=Math.max(totalW,d[0]);totalH+=d[1];}
-                    else{totalW+=d[0];totalH=Math.max(totalH,d[1]);}
-                }
-                previewTiles(c,preview,70,1130,315,1305);
-                line(c,344,1138,344,1314,ink(),1f);
-                left(c,tr("Each part:","كل جزء:","Cada parte:"),375,1178,260,21,muted);
-                left(c,firstW+" × "+firstH+" px",375,1212,260,25,ink());
-                left(c,tr("Total joined:","الإجمالي بعد الجمع:","Total unido:"),375,1255,260,21,muted);
-                left(c,totalW+" × "+totalH+" px · "+parts+" "+tr("parts","أجزاء","partes"),375,1292,275,22,ink());
-            }
-            hit(42,1070,678,1348,()->{sizeTip=false;invalidate();});
-        }''',
-'''        private void drawSizeTip(Canvas c) {
-            float anchor = 40 + sizeTipChoice * 161f + 75.5f;
-            int tipPaper = dark ? 0xFF27313B : 0xFFF3F1EA;
-
-            Path notch = new Path();
-            notch.moveTo(anchor - 17, 1071);
-            notch.lineTo(anchor, 1049);
-            notch.lineTo(anchor + 17, 1071);
-            notch.close();
-            p.setColor(tipPaper);
-            c.drawPath(notch, p);
-
-            fill(c,42,1070,678,1366,22,tipPaper);
-            outline(c,42,1070,678,1366,22,ink());
-
-            String[] labels={tr("Original","الأصلي","Original"),"750 px","1080 px",
-                    tr("Custom","مخصص","Personalizado")};
-
-            left(c,tr("Example (","مثال (","Ejemplo (")+labels[sizeTipChoice]+")",
-                    68,1118,560,25,ink());
-
-            if(sourceWidth<2||sourceHeight<2) {
-                txt(c,tr("Select an image to calculate real dimensions",
-                        "اختر صورة لحساب المقاسات الحقيقية",
-                        "Selecciona una imagen para calcular"),
-                        360,1228,570,23,muted);
-            } else {
-                int target=sizeTipChoice==0?0:sizeTipChoice==1?750:sizeTipChoice==2?1080:custom;
-                int totalW=0,totalH=0;
-                int firstW=0,firstH=0;
-
-                for(int i=0;i<parts;i++){
-                    int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,target);
-                    if(i==0){firstW=d[0];firstH=d[1];}
-                    if(horizontal){
-                        totalW=Math.max(totalW,d[0]);
-                        totalH+=d[1];
-                    } else {
-                        totalW+=d[0];
-                        totalH=Math.max(totalH,d[1]);
-                    }
-                }
-
-                previewTiles(c,preview,70,1145,320,1300);
-                line(c,345,1138,345,1338,ink(),1.35f);
-
-                left(c,"↔  " + firstW + " px",70,1332,125,18,muted);
-                left(c,"↕  " + firstH + " px",205,1332,125,18,muted);
-
-                left(c,tr("Each part:","كل جزء:","Cada parte:"),375,1175,260,20,muted);
-                left(c,firstW + " × " + firstH + " px",375,1213,260,27,ink());
-
-                left(c,tr("Joined size:","الحجم بعد الجمع:","Tamaño unido:"),375,1264,260,20,muted);
-                left(c,totalW + " × " + totalH + " px",375,1304,275,27,ink());
-                left(c,"(" + parts + " " + tr("parts","أجزاء","partes") + ")",375,1338,260,20,muted);
-            }
-
-            hit(42,1070,678,1366,()->{sizeTip=false;invalidate();});
-        }''',
-'int tipPaper = dark ? 0xFF27313B : 0xFFF3F1EA;'
-    )
-
-    replaceOnce(
-'''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.5f);p.setColor(ink());''',
-'''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.85f);p.setColor(ink());''',
-'p.setStrokeWidth(1.85f);p.setColor(ink());'
-    )
-
-    replaceOnce(
-'''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1f);p.setColor(alpha(ink(),70));''',
-'''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.28f);p.setColor(alpha(ink(),82));''',
-'p.setStrokeWidth(1.28f);p.setColor(alpha(ink(),82));'
-    )
-
-    if (src != original) {
-        sourceFile.write(src, 'UTF-8')
-        println 'Applied ImageSplitter Lovable parity patch v3.'
-    } else {
-        println 'ImageSplitter Lovable parity patch v3 already applied.'
-    }
-}
-
-// Launcher icon aligned with the approved Lovable mark.
-def launcherFile = file('app/src/main/res/drawable/ic_launcher_sketch.xml')
-if (launcherFile.exists()) {
-    launcherFile.setText('''<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-
-    <path
-        android:fillColor="#101820"
-        android:pathData="M0,0h108v108h-108z" />
-
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#F6F7F8"
-        android:strokeWidth="4.4"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="
-            M35,22 H73
-            A8,8 0,0 1,81 30
-            V36
-            A8,8 0,0 1,73 44
-            H35
-            A8,8 0,0 1,27 36
-            V30
-            A8,8 0,0 1,35 22 Z
-
-            M29,45 H79
-            A8,8 0,0 1,87 53
-            V59
-            A8,8 0,0 1,79 67
-            H29
-            A8,8 0,0 1,21 59
-            V53
-            A8,8 0,0 1,29 45 Z
-
-            M34,68 H74
-            A8,8 0,0 1,82 76
-            V82
-            A8,8 0,0 1,74 90
-            H34
-            A8,8 0,0 1,26 82
-            V76
-            A8,8 0,0 1,34 68 Z" />
-</vector>
-''', 'UTF-8')
-}
+            p.setStyle(Paint.Style
