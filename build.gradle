@@ -2,52 +2,24 @@ plugins {
     id 'com.android.application' version '8.7.3' apply false
 }
 
-/*
- * ImageSplitter Lovable parity patch v4
- *
- * What this build-time patch does:
- * 1) Fixes the home-screen glitch / disappearing lower area by using a stable
- *    home canvas height again (slightly larger than stock for safer scrolling).
- * 2) Replaces the Split Direction icons only, without changing the rest of the
- *    button layout / colors / spacing.
- * 3) Updates the in-app logo + launcher icon to the approved Lovable style.
- * 4) Refines the long-press size info card.
- * 5) Slightly tunes border / divider / heading weight to match Lovable better.
- * 6) Adapts vertical rhythm and text scale to narrow/tall phone screens.
- * 7) Adds optional on-device ESRGAN AI enhancement (2x) after splitting.
- * 8) Draws a real stack icon next to Split & Export.
- */
+def decodeText = { String value ->
+    new String(java.util.Base64.getDecoder().decode(value), 'UTF-8')
+}
 
-
-// -----------------------------------------------------------------------------
-// Optional on-device AI enhancement (ESRGAN / TensorFlow Lite)
-// -----------------------------------------------------------------------------
 def appGradleFile = file('app/build.gradle')
 if (appGradleFile.exists()) {
     String appGradle = appGradleFile.getText('UTF-8')
 
-    if (!appGradle.contains("org.tensorflow:tensorflow-lite:2.16.1")) {
-        appGradle = appGradle.replace(
-                "dependencies {\n    testImplementation 'junit:junit:4.13.2'",
-                "dependencies {\n    implementation 'org.tensorflow:tensorflow-lite:2.16.1'\n    testImplementation 'junit:junit:4.13.2'")
+    String oldDep = decodeText('ZGVwZW5kZW5jaWVzIHsKICAgIHRlc3RJbXBsZW1lbnRhdGlvbiAnanVuaXQ6anVuaXQ6NC4xMy4yJwp9')
+    String newDep = decodeText('ZGVwZW5kZW5jaWVzIHsKICAgIGltcGxlbWVudGF0aW9uICdvcmcudGVuc29yZmxvdzp0ZW5zb3JmbG93LWxpdGU6Mi4xNi4xJwogICAgdGVzdEltcGxlbWVudGF0aW9uICdqdW5pdDpqdW5pdDo0LjEzLjInCn0=')
+    if (appGradle.contains(oldDep)) {
+        appGradle = appGradle.replace(oldDep, newDep)
     }
 
-    if (!appGradle.contains("noCompress += ['tflite']")) {
-        appGradle = appGradle.replace(
-'''    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-}''',
-'''    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-
-    androidResources {
-        noCompress += ['tflite']
-    }
-}''')
+    String oldAndroidEnd = decodeText('ICAgIGNvbXBpbGVPcHRpb25zIHsKICAgICAgICBzb3VyY2VDb21wYXRpYmlsaXR5IEphdmFWZXJzaW9uLlZFUlNJT05fMTcKICAgICAgICB0YXJnZXRDb21wYXRpYmlsaXR5IEphdmFWZXJzaW9uLlZFUlNJT05fMTcKICAgIH0KfQ==')
+    String newAndroidEnd = decodeText('ICAgIGNvbXBpbGVPcHRpb25zIHsKICAgICAgICBzb3VyY2VDb21wYXRpYmlsaXR5IEphdmFWZXJzaW9uLlZFUlNJT05fMTcKICAgICAgICB0YXJnZXRDb21wYXRpYmlsaXR5IEphdmFWZXJzaW9uLlZFUlNJT05fMTcKICAgIH0KCiAgICBhbmRyb2lkUmVzb3VyY2VzIHsKICAgICAgICBub0NvbXByZXNzICs9IFsndGZsaXRlJ10KICAgIH0KfQ==')
+    if (appGradle.contains(oldAndroidEnd)) {
+        appGradle = appGradle.replace(oldAndroidEnd, newAndroidEnd)
     }
 
     appGradleFile.write(appGradle, 'UTF-8')
@@ -55,482 +27,34 @@ if (appGradleFile.exists()) {
 
 def aiSourceFile = file('app/src/main/java/com/imagesplitter/app/AiUpscaler.java')
 aiSourceFile.parentFile.mkdirs()
-aiSourceFile.write('''package com.imagesplitter.app;
+aiSourceFile.write(decodeText('cGFja2FnZSBjb20uaW1hZ2VzcGxpdHRlci5hcHA7CgppbXBvcnQgYW5kcm9pZC5jb250ZW50LkNvbnRlbnRSZXNvbHZlcjsKaW1wb3J0IGFuZHJvaWQuY29udGVudC5yZXMuQXNzZXRGaWxlRGVzY3JpcHRvcjsKaW1wb3J0IGFuZHJvaWQuY29udGVudC5yZXMuQXNzZXRNYW5hZ2VyOwppbXBvcnQgYW5kcm9pZC5ncmFwaGljcy5CaXRtYXA7CmltcG9ydCBhbmRyb2lkLmdyYXBoaWNzLkJpdG1hcEZhY3Rvcnk7CmltcG9ydCBhbmRyb2lkLm5ldC5Vcmk7CgppbXBvcnQgb3JnLnRlbnNvcmZsb3cubGl0ZS5JbnRlcnByZXRlcjsKCmltcG9ydCBqYXZhLmlvLkZpbGVJbnB1dFN0cmVhbTsKaW1wb3J0IGphdmEuaW8uSW5wdXRTdHJlYW07CmltcG9ydCBqYXZhLmlvLk91dHB1dFN0cmVhbTsKaW1wb3J0IGphdmEubmlvLk1hcHBlZEJ5dGVCdWZmZXI7CmltcG9ydCBqYXZhLm5pby5jaGFubmVscy5GaWxlQ2hhbm5lbDsKaW1wb3J0IGphdmEudXRpbC5BcnJheUxpc3Q7CmltcG9ydCBqYXZhLnV0aWwuTGlzdDsKCnB1YmxpYyBmaW5hbCBjbGFzcyBBaVVwc2NhbGVyIGltcGxlbWVudHMgQXV0b0Nsb3NlYWJsZSB7CiAgICBwcml2YXRlIHN0YXRpYyBmaW5hbCBTdHJpbmcgTU9ERUwgPSAiRVNSR0FOLnRmbGl0ZSI7CiAgICBwcml2YXRlIHN0YXRpYyBmaW5hbCBpbnQgRklOQUxfU0NBTEUgPSAyOwogICAgcHJpdmF0ZSBzdGF0aWMgZmluYWwgbG9uZyBNQVhfSU5QVVRfUElYRUxTID0gMl81MDBfMDAwTDsKCiAgICBwcml2YXRlIGZpbmFsIEludGVycHJldGVyIGludGVycHJldGVyOwogICAgcHJpdmF0ZSBmaW5hbCBpbnQgaW5wdXRXaWR0aDsKICAgIHByaXZhdGUgZmluYWwgaW50IGlucHV0SGVpZ2h0OwogICAgcHJpdmF0ZSBmaW5hbCBpbnQgbW9kZWxTY2FsZTsKCiAgICBwdWJsaWMgQWlVcHNjYWxlcihBc3NldE1hbmFnZXIgYXNzZXRzKSB0aHJvd3MgRXhjZXB0aW9uIHsKICAgICAgICBJbnRlcnByZXRlci5PcHRpb25zIG9wdGlvbnMgPSBuZXcgSW50ZXJwcmV0ZXIuT3B0aW9ucygpOwogICAgICAgIG9wdGlvbnMuc2V0TnVtVGhyZWFkcyhNYXRoLm1heCgyLCBNYXRoLm1pbig0LCBSdW50aW1lLmdldFJ1bnRpbWUoKS5hdmFpbGFibGVQcm9jZXNzb3JzKCkpKSk7CgogICAgICAgIGludGVycHJldGVyID0gbmV3IEludGVycHJldGVyKGxvYWRNb2RlbChhc3NldHMpLCBvcHRpb25zKTsKCiAgICAgICAgaW50W10gaW5TaGFwZSA9IGludGVycHJldGVyLmdldElucHV0VGVuc29yKDApLnNoYXBlKCk7CiAgICAgICAgaW50W10gb3V0U2hhcGUgPSBpbnRlcnByZXRlci5nZXRPdXRwdXRUZW5zb3IoMCkuc2hhcGUoKTsKCiAgICAgICAgaWYgKGluU2hhcGUubGVuZ3RoICE9IDQgfHwgb3V0U2hhcGUubGVuZ3RoICE9IDQpIHsKICAgICAgICAgICAgdGhyb3cgbmV3IElsbGVnYWxTdGF0ZUV4Y2VwdGlvbigiVW5zdXBwb3J0ZWQgRVNSR0FOIHRlbnNvciBzaGFwZSIpOwogICAgICAgIH0KCiAgICAgICAgaW5wdXRIZWlnaHQgPSBpblNoYXBlWzFdOwogICAgICAgIGlucHV0V2lkdGggPSBpblNoYXBlWzJdOwoKICAgICAgICBpZiAoaW5wdXRIZWlnaHQgPD0gMCB8fCBpbnB1dFdpZHRoIDw9IDApIHsKICAgICAgICAgICAgdGhyb3cgbmV3IElsbGVnYWxTdGF0ZUV4Y2VwdGlvbigiSW52YWxpZCBFU1JHQU4gaW5wdXQgc2l6ZSIpOwogICAgICAgIH0KCiAgICAgICAgaW50IHN5ID0gb3V0U2hhcGVbMV0gLyBpbnB1dEhlaWdodDsKICAgICAgICBpbnQgc3ggPSBvdXRTaGFwZVsyXSAvIGlucHV0V2lkdGg7CiAgICAgICAgbW9kZWxTY2FsZSA9IE1hdGgubWluKHN4LCBzeSk7CgogICAgICAgIGlmIChtb2RlbFNjYWxlIDwgRklOQUxfU0NBTEUpIHsKICAgICAgICAgICAgdGhyb3cgbmV3IElsbGVnYWxTdGF0ZUV4Y2VwdGlvbigiRVNSR0FOIG91dHB1dCBzY2FsZSBpcyB0b28gc21hbGwiKTsKICAgICAgICB9CiAgICB9CgogICAgcHJpdmF0ZSBzdGF0aWMgTWFwcGVkQnl0ZUJ1ZmZlciBsb2FkTW9kZWwoQXNzZXRNYW5hZ2VyIGFzc2V0cykgdGhyb3dzIEV4Y2VwdGlvbiB7CiAgICAgICAgQXNzZXRGaWxlRGVzY3JpcHRvciBmZCA9IGFzc2V0cy5vcGVuRmQoTU9ERUwpOwogICAgICAgIHRyeSAoRmlsZUlucHV0U3RyZWFtIGlucHV0ID0gbmV3IEZpbGVJbnB1dFN0cmVhbShmZC5nZXRGaWxlRGVzY3JpcHRvcigpKTsKICAgICAgICAgICAgIEZpbGVDaGFubmVsIGNoYW5uZWwgPSBpbnB1dC5nZXRDaGFubmVsKCkpIHsKICAgICAgICAgICAgcmV0dXJuIGNoYW5uZWwubWFwKAogICAgICAgICAgICAgICAgICAgIEZpbGVDaGFubmVsLk1hcE1vZGUuUkVBRF9PTkxZLAogICAgICAgICAgICAgICAgICAgIGZkLmdldFN0YXJ0T2Zmc2V0KCksCiAgICAgICAgICAgICAgICAgICAgZmQuZ2V0RGVjbGFyZWRMZW5ndGgoKSk7CiAgICAgICAgfSBmaW5hbGx5IHsKICAgICAgICAgICAgZmQuY2xvc2UoKTsKICAgICAgICB9CiAgICB9CgogICAgcHVibGljIHN0YXRpYyB2b2lkIGVuaGFuY2VJblBsYWNlKAogICAgICAgICAgICBDb250ZW50UmVzb2x2ZXIgcmVzb2x2ZXIsCiAgICAgICAgICAgIEFzc2V0TWFuYWdlciBhc3NldHMsCiAgICAgICAgICAgIExpc3Q8VXJpPiBpbWFnZXMpIHRocm93cyBFeGNlcHRpb24gewoKICAgICAgICBpZiAoaW1hZ2VzID09IG51bGwgfHwgaW1hZ2VzLmlzRW1wdHkoKSkgcmV0dXJuOwoKICAgICAgICB0cnkgKEFpVXBzY2FsZXIgdXBzY2FsZXIgPSBuZXcgQWlVcHNjYWxlcihhc3NldHMpKSB7CiAgICAgICAgICAgIGZvciAoVXJpIHVyaSA6IGltYWdlcykgewogICAgICAgICAgICAgICAgQml0bWFwIHNvdXJjZTsKICAgICAgICAgICAgICAgIHRyeSAoSW5wdXRTdHJlYW0gaW5wdXQgPSByZXNvbHZlci5vcGVuSW5wdXRTdHJlYW0odXJpKSkgewogICAgICAgICAgICAgICAgICAgIHNvdXJjZSA9IEJpdG1hcEZhY3RvcnkuZGVjb2RlU3RyZWFtKGlucHV0KTsKICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICBpZiAoc291cmNlID09IG51bGwpIHsKICAgICAgICAgICAgICAgICAgICB0aHJvdyBuZXcgSWxsZWdhbFN0YXRlRXhjZXB0aW9uKCJVbmFibGUgdG8gZGVjb2RlIGV4cG9ydGVkIGltYWdlIik7CiAgICAgICAgICAgICAgICB9CgogICAgICAgICAgICAgICAgQml0bWFwIGVuaGFuY2VkID0gbnVsbDsKICAgICAgICAgICAgICAgIHRyeSB7CiAgICAgICAgICAgICAgICAgICAgZW5oYW5jZWQgPSB1cHNjYWxlci5lbmhhbmNlKHNvdXJjZSk7CgogICAgICAgICAgICAgICAgICAgIHRyeSAoT3V0cHV0U3RyZWFtIG91dHB1dCA9IHJlc29sdmVyLm9wZW5PdXRwdXRTdHJlYW0odXJpLCAid3QiKSkgewogICAgICAgICAgICAgICAgICAgICAgICBpZiAob3V0cHV0ID09IG51bGwgfHwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAhZW5oYW5jZWQuY29tcHJlc3MoQml0bWFwLkNvbXByZXNzRm9ybWF0LlBORywgMTAwLCBvdXRwdXQpKSB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICB0aHJvdyBuZXcgSWxsZWdhbFN0YXRlRXhjZXB0aW9uKCJVbmFibGUgdG8gc2F2ZSBBSSBlbmhhbmNlZCBpbWFnZSIpOwogICAgICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgfSBmaW5hbGx5IHsKICAgICAgICAgICAgICAgICAgICBpZiAoZW5oYW5jZWQgIT0gbnVsbCAmJiBlbmhhbmNlZCAhPSBzb3VyY2UgJiYgIWVuaGFuY2VkLmlzUmVjeWNsZWQoKSkgewogICAgICAgICAgICAgICAgICAgICAgICBlbmhhbmNlZC5yZWN5Y2xlKCk7CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgIGlmICghc291cmNlLmlzUmVjeWNsZWQoKSkgc291cmNlLnJlY3ljbGUoKTsKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0KCiAgICBwdWJsaWMgQml0bWFwIGVuaGFuY2UoQml0bWFwIGJpdG1hcCkgewogICAgICAgIGludCB3aWR0aCA9IGJpdG1hcC5nZXRXaWR0aCgpOwogICAgICAgIGludCBoZWlnaHQgPSBiaXRtYXAuZ2V0SGVpZ2h0KCk7CgogICAgICAgIGlmICgobG9uZykgd2lkdGggKiBoZWlnaHQgPiBNQVhfSU5QVVRfUElYRUxTKSB7CiAgICAgICAgICAgIHRocm93IG5ldyBJbGxlZ2FsQXJndW1lbnRFeGNlcHRpb24oCiAgICAgICAgICAgICAgICAgICAgIkltYWdlIHBhcnQgaXMgdG9vIGxhcmdlIGZvciBzYWZlIG9uLWRldmljZSBBSSBlbmhhbmNlbWVudCIpOwogICAgICAgIH0KCiAgICAgICAgaW50IG91dHB1dFdpZHRoID0gd2lkdGggKiBGSU5BTF9TQ0FMRTsKICAgICAgICBpbnQgb3V0cHV0SGVpZ2h0ID0gaGVpZ2h0ICogRklOQUxfU0NBTEU7CgogICAgICAgIGludFtdIHNvdXJjZVBpeGVscyA9IG5ldyBpbnRbd2lkdGggKiBoZWlnaHRdOwogICAgICAgIGJpdG1hcC5nZXRQaXhlbHMoc291cmNlUGl4ZWxzLCAwLCB3aWR0aCwgMCwgMCwgd2lkdGgsIGhlaWdodCk7CgogICAgICAgIGludFtdIG91dHB1dFBpeGVscyA9IG5ldyBpbnRbb3V0cHV0V2lkdGggKiBvdXRwdXRIZWlnaHRdOwoKICAgICAgICBmbG9hdFtdW11bXVtdIGlucHV0ID0gbmV3IGZsb2F0WzFdW2lucHV0SGVpZ2h0XVtpbnB1dFdpZHRoXVszXTsKCiAgICAgICAgaW50IG1vZGVsT3V0SCA9IGlucHV0SGVpZ2h0ICogbW9kZWxTY2FsZTsKICAgICAgICBpbnQgbW9kZWxPdXRXID0gaW5wdXRXaWR0aCAqIG1vZGVsU2NhbGU7CiAgICAgICAgZmxvYXRbXVtdW11bXSBvdXRwdXQgPSBuZXcgZmxvYXRbMV1bbW9kZWxPdXRIXVttb2RlbE91dFddWzNdOwoKICAgICAgICBpbnQgb3ZlcmxhcCA9IE1hdGgubWF4KDIsIE1hdGgubWluKGlucHV0V2lkdGgsIGlucHV0SGVpZ2h0KSAvIDEyKTsKICAgICAgICBpbnQgc3RlcFggPSBNYXRoLm1heCgxLCBpbnB1dFdpZHRoIC0gb3ZlcmxhcCAqIDIpOwogICAgICAgIGludCBzdGVwWSA9IE1hdGgubWF4KDEsIGlucHV0SGVpZ2h0IC0gb3ZlcmxhcCAqIDIpOwoKICAgICAgICBMaXN0PEludGVnZXI+IHhzID0gdGlsZVN0YXJ0cyh3aWR0aCwgaW5wdXRXaWR0aCwgc3RlcFgpOwogICAgICAgIExpc3Q8SW50ZWdlcj4geXMgPSB0aWxlU3RhcnRzKGhlaWdodCwgaW5wdXRIZWlnaHQsIHN0ZXBZKTsKCiAgICAgICAgZm9yIChpbnQgc3RhcnRZIDogeXMpIHsKICAgICAgICAgICAgZm9yIChpbnQgc3RhcnRYIDogeHMpIHsKICAgICAgICAgICAgICAgIGZpbGxJbnB1dChpbnB1dCwgc291cmNlUGl4ZWxzLCB3aWR0aCwgaGVpZ2h0LCBzdGFydFgsIHN0YXJ0WSk7CgogICAgICAgICAgICAgICAgaW50ZXJwcmV0ZXIucnVuKGlucHV0LCBvdXRwdXQpOwoKICAgICAgICAgICAgICAgIGludCBsZWZ0Q3JvcCA9IHN0YXJ0WCA9PSAwID8gMCA6IG92ZXJsYXA7CiAgICAgICAgICAgICAgICBpbnQgdG9wQ3JvcCA9IHN0YXJ0WSA9PSAwID8gMCA6IG92ZXJsYXA7CiAgICAgICAgICAgICAgICBpbnQgcmlnaHRDcm9wID0gc3RhcnRYICsgaW5wdXRXaWR0aCA+PSB3aWR0aCA/IDAgOiBvdmVybGFwOwogICAgICAgICAgICAgICAgaW50IGJvdHRvbUNyb3AgPSBzdGFydFkgKyBpbnB1dEhlaWdodCA+PSBoZWlnaHQgPyAwIDogb3ZlcmxhcDsKCiAgICAgICAgICAgICAgICBpbnQgbWF4TG9jYWxYID0gTWF0aC5taW4oaW5wdXRXaWR0aCAtIHJpZ2h0Q3JvcCwgd2lkdGggLSBzdGFydFgpOwogICAgICAgICAgICAgICAgaW50IG1heExvY2FsWSA9IE1hdGgubWluKGlucHV0SGVpZ2h0IC0gYm90dG9tQ3JvcCwgaGVpZ2h0IC0gc3RhcnRZKTsKCiAgICAgICAgICAgICAgICBmb3IgKGludCBsb2NhbFkgPSB0b3BDcm9wOyBsb2NhbFkgPCBtYXhMb2NhbFk7IGxvY2FsWSsrKSB7CiAgICAgICAgICAgICAgICAgICAgaW50IHNyY0ltYWdlWSA9IHN0YXJ0WSArIGxvY2FsWTsKCiAgICAgICAgICAgICAgICAgICAgZm9yIChpbnQgbG9jYWxYID0gbGVmdENyb3A7IGxvY2FsWCA8IG1heExvY2FsWDsgbG9jYWxYKyspIHsKICAgICAgICAgICAgICAgICAgICAgICAgaW50IHNyY0ltYWdlWCA9IHN0YXJ0WCArIGxvY2FsWDsKICAgICAgICAgICAgICAgICAgICAgICAgaW50IGFscGhhID0gKHNvdXJjZVBpeGVsc1tzcmNJbWFnZVkgKiB3aWR0aCArIHNyY0ltYWdlWF0gPj4+IDI0KSAmIDB4RkY7CgogICAgICAgICAgICAgICAgICAgICAgICBmb3IgKGludCBveSA9IDA7IG95IDwgRklOQUxfU0NBTEU7IG95KyspIHsKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGludCBkZXN0WSA9IHNyY0ltYWdlWSAqIEZJTkFMX1NDQUxFICsgb3k7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpbnQgbW9kZWxZID0gbG9jYWxZICogbW9kZWxTY2FsZQogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICArIChveSAqIG1vZGVsU2NhbGUgLyBGSU5BTF9TQ0FMRSk7CgogICAgICAgICAgICAgICAgICAgICAgICAgICAgZm9yIChpbnQgb3ggPSAwOyBveCA8IEZJTkFMX1NDQUxFOyBveCsrKSB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgaW50IGRlc3RYID0gc3JjSW1hZ2VYICogRklOQUxfU0NBTEUgKyBveDsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpbnQgbW9kZWxYID0gbG9jYWxYICogbW9kZWxTY2FsZQogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgKyAob3ggKiBtb2RlbFNjYWxlIC8gRklOQUxfU0NBTEUpOwoKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpbnQgYmxvY2sgPSBNYXRoLm1heCgxLCBtb2RlbFNjYWxlIC8gRklOQUxfU0NBTEUpOwoKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBmbG9hdCByciA9IDBmOwogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGZsb2F0IGdnID0gMGY7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZmxvYXQgYmIgPSAwZjsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpbnQgc2FtcGxlcyA9IDA7CgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGZvciAoaW50IGJ5ID0gMDsgYnkgPCBibG9jazsgYnkrKykgewogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpbnQgeXkgPSBNYXRoLm1pbihtb2RlbE91dEggLSAxLCBtb2RlbFkgKyBieSk7CgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBmb3IgKGludCBieCA9IDA7IGJ4IDwgYmxvY2s7IGJ4KyspIHsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGludCB4eCA9IE1hdGgubWluKG1vZGVsT3V0VyAtIDEsIG1vZGVsWCArIGJ4KTsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJyICs9IG91dHB1dFswXVt5eV1beHhdWzBdOwogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZ2cgKz0gb3V0cHV0WzBdW3l5XVt4eF1bMV07CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBiYiArPSBvdXRwdXRbMF1beXldW3h4XVsyXTsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHNhbXBsZXMrKzsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgaW50IHIgPSBjbGFtcChNYXRoLnJvdW5kKHJyIC8gc2FtcGxlcykpOwogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGludCBnID0gY2xhbXAoTWF0aC5yb3VuZChnZyAvIHNhbXBsZXMpKTsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpbnQgYiA9IGNsYW1wKE1hdGgucm91bmQoYmIgLyBzYW1wbGVzKSk7CgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIG91dHB1dFBpeGVsc1tkZXN0WSAqIG91dHB1dFdpZHRoICsgZGVzdFhdID0KICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIChhbHBoYSA8PCAyNCkgfCAociA8PCAxNikgfCAoZyA8PCA4KSB8IGI7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICB9CgogICAgICAgIEJpdG1hcCByZXN1bHQgPSBCaXRtYXAuY3JlYXRlQml0bWFwKAogICAgICAgICAgICAgICAgb3V0cHV0V2lkdGgsCiAgICAgICAgICAgICAgICBvdXRwdXRIZWlnaHQsCiAgICAgICAgICAgICAgICBCaXRtYXAuQ29uZmlnLkFSR0JfODg4OCk7CgogICAgICAgIHJlc3VsdC5zZXRQaXhlbHMoCiAgICAgICAgICAgICAgICBvdXRwdXRQaXhlbHMsCiAgICAgICAgICAgICAgICAwLAogICAgICAgICAgICAgICAgb3V0cHV0V2lkdGgsCiAgICAgICAgICAgICAgICAwLAogICAgICAgICAgICAgICAgMCwKICAgICAgICAgICAgICAgIG91dHB1dFdpZHRoLAogICAgICAgICAgICAgICAgb3V0cHV0SGVpZ2h0KTsKCiAgICAgICAgcmV0dXJuIHJlc3VsdDsKICAgIH0KCiAgICBwcml2YXRlIHN0YXRpYyBMaXN0PEludGVnZXI+IHRpbGVTdGFydHMoaW50IHNpemUsIGludCB0aWxlLCBpbnQgc3RlcCkgewogICAgICAgIEFycmF5TGlzdDxJbnRlZ2VyPiByZXN1bHQgPSBuZXcgQXJyYXlMaXN0PD4oKTsKCiAgICAgICAgaWYgKHNpemUgPD0gdGlsZSkgewogICAgICAgICAgICByZXN1bHQuYWRkKDApOwogICAgICAgICAgICByZXR1cm4gcmVzdWx0OwogICAgICAgIH0KCiAgICAgICAgaW50IGN1cnJlbnQgPSAwOwogICAgICAgIHdoaWxlIChjdXJyZW50ICsgdGlsZSA8IHNpemUpIHsKICAgICAgICAgICAgcmVzdWx0LmFkZChjdXJyZW50KTsKICAgICAgICAgICAgY3VycmVudCArPSBzdGVwOwogICAgICAgIH0KCiAgICAgICAgaW50IGxhc3QgPSBNYXRoLm1heCgwLCBzaXplIC0gdGlsZSk7CiAgICAgICAgaWYgKHJlc3VsdC5pc0VtcHR5KCkgfHwgcmVzdWx0LmdldChyZXN1bHQuc2l6ZSgpIC0gMSkgIT0gbGFzdCkgewogICAgICAgICAgICByZXN1bHQuYWRkKGxhc3QpOwogICAgICAgIH0KCiAgICAgICAgcmV0dXJuIHJlc3VsdDsKICAgIH0KCiAgICBwcml2YXRlIHZvaWQgZmlsbElucHV0KAogICAgICAgICAgICBmbG9hdFtdW11bXVtdIGlucHV0LAogICAgICAgICAgICBpbnRbXSBwaXhlbHMsCiAgICAgICAgICAgIGludCB3aWR0aCwKICAgICAgICAgICAgaW50IGhlaWdodCwKICAgICAgICAgICAgaW50IHN0YXJ0WCwKICAgICAgICAgICAgaW50IHN0YXJ0WSkgewoKICAgICAgICBmb3IgKGludCB5ID0gMDsgeSA8IGlucHV0SGVpZ2h0OyB5KyspIHsKICAgICAgICAgICAgaW50IHN5ID0gTWF0aC5taW4oaGVpZ2h0IC0gMSwgTWF0aC5tYXgoMCwgc3RhcnRZICsgeSkpOwoKICAgICAgICAgICAgZm9yIChpbnQgeCA9IDA7IHggPCBpbnB1dFdpZHRoOyB4KyspIHsKICAgICAgICAgICAgICAgIGludCBzeCA9IE1hdGgubWluKHdpZHRoIC0gMSwgTWF0aC5tYXgoMCwgc3RhcnRYICsgeCkpOwogICAgICAgICAgICAgICAgaW50IHBpeGVsID0gcGl4ZWxzW3N5ICogd2lkdGggKyBzeF07CgogICAgICAgICAgICAgICAgaW5wdXRbMF1beV1beF1bMF0gPSAocGl4ZWwgPj4gMTYpICYgMHhGRjsKICAgICAgICAgICAgICAgIGlucHV0WzBdW3ldW3hdWzFdID0gKHBpeGVsID4+IDgpICYgMHhGRjsKICAgICAgICAgICAgICAgIGlucHV0WzBdW3ldW3hdWzJdID0gcGl4ZWwgJiAweEZGOwogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQoKICAgIHByaXZhdGUgc3RhdGljIGludCBjbGFtcChpbnQgdmFsdWUpIHsKICAgICAgICByZXR1cm4gTWF0aC5tYXgoMCwgTWF0aC5taW4oMjU1LCB2YWx1ZSkpOwogICAgfQoKICAgIEBPdmVycmlkZQogICAgcHVibGljIHZvaWQgY2xvc2UoKSB7CiAgICAgICAgaW50ZXJwcmV0ZXIuY2xvc2UoKTsKICAgIH0KfQo='), 'UTF-8')
 
-import android.content.ContentResolver;
-import android.content.res.AssetFileDescriptor;
-import android.content.res.AssetManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.net.Uri;
-
-import org.tensorflow.lite.Interpreter;
-
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.List;
-
-/**
- * Optional local super-resolution.
- *
- * Uses the TensorFlow Lite ESRGAN model on-device. The model itself is x4,
- * but ImageSplitter writes a safer x2 result to reduce RAM usage and export time
- * on mid-range phones.
- */
-public final class AiUpscaler implements AutoCloseable {
-    private static final String MODEL = "ESRGAN.tflite";
-    private static final int FINAL_SCALE = 2;
-    private static final long MAX_INPUT_PIXELS = 2_500_000L;
-
-    private final Interpreter interpreter;
-    private final int inputWidth;
-    private final int inputHeight;
-    private final int modelScale;
-
-    public AiUpscaler(AssetManager assets) throws Exception {
-        Interpreter.Options options = new Interpreter.Options();
-        options.setNumThreads(Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())));
-
-        interpreter = new Interpreter(loadModel(assets), options);
-
-        int[] inShape = interpreter.getInputTensor(0).shape();
-        int[] outShape = interpreter.getOutputTensor(0).shape();
-
-        if (inShape.length != 4 || outShape.length != 4) {
-            throw new IllegalStateException("Unsupported ESRGAN tensor shape");
-        }
-
-        inputHeight = inShape[1];
-        inputWidth = inShape[2];
-
-        if (inputHeight <= 0 || inputWidth <= 0) {
-            throw new IllegalStateException("Invalid ESRGAN input size");
-        }
-
-        int sy = outShape[1] / inputHeight;
-        int sx = outShape[2] / inputWidth;
-        modelScale = Math.min(sx, sy);
-
-        if (modelScale < FINAL_SCALE) {
-            throw new IllegalStateException("ESRGAN output scale is too small");
-        }
-    }
-
-    private static MappedByteBuffer loadModel(AssetManager assets) throws Exception {
-        AssetFileDescriptor fd = assets.openFd(MODEL);
-        try (FileInputStream input = new FileInputStream(fd.getFileDescriptor());
-             FileChannel channel = input.getChannel()) {
-            return channel.map(
-                    FileChannel.MapMode.READ_ONLY,
-                    fd.getStartOffset(),
-                    fd.getDeclaredLength());
-        } finally {
-            fd.close();
-        }
-    }
-
-    public static void enhanceInPlace(
-            ContentResolver resolver,
-            AssetManager assets,
-            List<Uri> images) throws Exception {
-
-        if (images == null || images.isEmpty()) return;
-
-        try (AiUpscaler upscaler = new AiUpscaler(assets)) {
-            for (Uri uri : images) {
-                Bitmap source;
-                try (InputStream input = resolver.openInputStream(uri)) {
-                    source = BitmapFactory.decodeStream(input);
-                }
-
-                if (source == null) {
-                    throw new IllegalStateException("Unable to decode exported image");
-                }
-
-                Bitmap enhanced = null;
-                try {
-                    enhanced = upscaler.enhance(source);
-                    try (OutputStream output = resolver.openOutputStream(uri, "wt")) {
-                        if (output == null || !enhanced.compress(Bitmap.CompressFormat.PNG, 100, output)) {
-                            throw new IllegalStateException("Unable to save AI enhanced image");
-                        }
-                    }
-                } finally {
-                    if (enhanced != null && enhanced != source && !enhanced.isRecycled()) {
-                        enhanced.recycle();
-                    }
-                    if (!source.isRecycled()) source.recycle();
-                }
-            }
-        }
-    }
-
-    public Bitmap enhance(Bitmap bitmap) {
-        int width = bitmap.getWidth();
-        int height = bitmap.getHeight();
-
-        if ((long) width * height > MAX_INPUT_PIXELS) {
-            throw new IllegalArgumentException(
-                    "Image part is too large for safe on-device AI enhancement");
-        }
-
-        final int outputWidth = width * FINAL_SCALE;
-        final int outputHeight = height * FINAL_SCALE;
-
-        int[] sourcePixels = new int[width * height];
-        bitmap.getPixels(sourcePixels, 0, width, 0, 0, width, height);
-
-        int[] outputPixels = new int[outputWidth * outputHeight];
-
-        float[][][][] input =
-                new float[1][inputHeight][inputWidth][3];
-
-        int modelOutH = inputHeight * modelScale;
-        int modelOutW = inputWidth * modelScale;
-        float[][][][] output =
-                new float[1][modelOutH][modelOutW][3];
-
-        int overlap = Math.max(2, Math.min(inputWidth, inputHeight) / 12);
-        int stepX = Math.max(1, inputWidth - overlap * 2);
-        int stepY = Math.max(1, inputHeight - overlap * 2);
-
-        List<Integer> xs = tileStarts(width, inputWidth, stepX);
-        List<Integer> ys = tileStarts(height, inputHeight, stepY);
-
-        for (int startY : ys) {
-            for (int startX : xs) {
-                fillInput(
-                        input,
-                        sourcePixels,
-                        width,
-                        height,
-                        startX,
-                        startY);
-
-                interpreter.run(input, output);
-
-                int leftCrop = startX == 0 ? 0 : overlap;
-                int topCrop = startY == 0 ? 0 : overlap;
-                int rightCrop =
-                        startX + inputWidth >= width ? 0 : overlap;
-                int bottomCrop =
-                        startY + inputHeight >= height ? 0 : overlap;
-
-                int maxLocalX = Math.min(inputWidth - rightCrop, width - startX);
-                int maxLocalY = Math.min(inputHeight - bottomCrop, height - startY);
-
-                for (int localY = topCrop; localY < maxLocalY; localY++) {
-                    int srcImageY = startY + localY;
-                    for (int localX = leftCrop; localX < maxLocalX; localX++) {
-                        int srcImageX = startX + localX;
-
-                        int alpha =
-                                (sourcePixels[srcImageY * width + srcImageX] >>> 24) & 0xFF;
-
-                        for (int oy = 0; oy < FINAL_SCALE; oy++) {
-                            int destY = srcImageY * FINAL_SCALE + oy;
-                            int modelY =
-                                    localY * modelScale
-                                            + (oy * modelScale / FINAL_SCALE);
-
-                            for (int ox = 0; ox < FINAL_SCALE; ox++) {
-                                int destX = srcImageX * FINAL_SCALE + ox;
-                                int modelX =
-                                        localX * modelScale
-                                                + (ox * modelScale / FINAL_SCALE);
-
-                                int block =
-                                        Math.max(1, modelScale / FINAL_SCALE);
-
-                                float rr = 0f;
-                                float gg = 0f;
-                                float bb = 0f;
-                                int samples = 0;
-
-                                for (int by = 0; by < block; by++) {
-                                    int yy = Math.min(modelOutH - 1, modelY + by);
-                                    for (int bx = 0; bx < block; bx++) {
-                                        int xx = Math.min(modelOutW - 1, modelX + bx);
-                                        rr += output[0][yy][xx][0];
-                                        gg += output[0][yy][xx][1];
-                                        bb += output[0][yy][xx][2];
-                                        samples++;
-                                    }
-                                }
-
-                                int r = clamp(Math.round(rr / samples));
-                                int g = clamp(Math.round(gg / samples));
-                                int b = clamp(Math.round(bb / samples));
-
-                                outputPixels[destY * outputWidth + destX] =
-                                        (alpha << 24) | (r << 16) | (g << 8) | b;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Bitmap result =
-                Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888);
-        result.setPixels(
-                outputPixels,
-                0,
-                outputWidth,
-                0,
-                0,
-                outputWidth,
-                outputHeight);
-
-        return result;
-    }
-
-    private static List<Integer> tileStarts(int size, int tile, int step) {
-        ArrayList<Integer> result = new ArrayList<>();
-
-        if (size <= tile) {
-            result.add(0);
-            return result;
-        }
-
-        int current = 0;
-        while (current + tile < size) {
-            result.add(current);
-            current += step;
-        }
-
-        int last = Math.max(0, size - tile);
-        if (result.isEmpty() || result.get(result.size() - 1) != last) {
-            result.add(last);
-        }
-
-        return result;
-    }
-
-    private void fillInput(
-            float[][][][] input,
-            int[] pixels,
-            int width,
-            int height,
-            int startX,
-            int startY) {
-
-        for (int y = 0; y < inputHeight; y++) {
-            int sy = Math.min(height - 1, Math.max(0, startY + y));
-
-            for (int x = 0; x < inputWidth; x++) {
-                int sx = Math.min(width - 1, Math.max(0, startX + x));
-                int pixel = pixels[sy * width + sx];
-
-                input[0][y][x][0] = (pixel >> 16) & 0xFF;
-                input[0][y][x][1] = (pixel >> 8) & 0xFF;
-                input[0][y][x][2] = pixel & 0xFF;
-            }
-        }
-    }
-
-    private static int clamp(int value) {
-        return Math.max(0, Math.min(255, value));
-    }
-
-    @Override
-    public void close() {
-        interpreter.close();
-    }
+def launcherFile = file('app/src/main/res/drawable/ic_launcher_sketch.xml')
+if (launcherFile.exists()) {
+    launcherFile.write(decodeText('PHZlY3RvciB4bWxuczphbmRyb2lkPSJodHRwOi8vc2NoZW1hcy5hbmRyb2lkLmNvbS9hcGsvcmVzL2FuZHJvaWQiCiAgICBhbmRyb2lkOndpZHRoPSIxMDhkcCIKICAgIGFuZHJvaWQ6aGVpZ2h0PSIxMDhkcCIKICAgIGFuZHJvaWQ6dmlld3BvcnRXaWR0aD0iMTA4IgogICAgYW5kcm9pZDp2aWV3cG9ydEhlaWdodD0iMTA4Ij4KICAgIDxwYXRoIGFuZHJvaWQ6ZmlsbENvbG9yPSIjMTAxODIwIiBhbmRyb2lkOnBhdGhEYXRhPSJNMCwwaDEwOHYxMDhoLTEwOHoiIC8+CiAgICA8cGF0aAogICAgICAgIGFuZHJvaWQ6ZmlsbENvbG9yPSIjMDAwMDAwMDAiCiAgICAgICAgYW5kcm9pZDpzdHJva2VDb2xvcj0iI0Y2RjdGOCIKICAgICAgICBhbmRyb2lkOnN0cm9rZVdpZHRoPSI0LjQiCiAgICAgICAgYW5kcm9pZDpzdHJva2VMaW5lQ2FwPSJyb3VuZCIKICAgICAgICBhbmRyb2lkOnN0cm9rZUxpbmVKb2luPSJyb3VuZCIKICAgICAgICBhbmRyb2lkOnBhdGhEYXRhPSJNMzUsMjIgSDczIEE4LDggMCwwIDEsODEgMzAgVjM2IEE4LDggMCwwIDEsNzMgNDQgSDM1IEE4LDggMCwwIDEsMjcgMzYgVjMwIEE4LDggMCwwIDEsMzUgMjIgWiBNMjksNDUgSDc5IEE4LDggMCwwIDEsODcgNTMgVjU5IEE4LDggMCwwIDEsNzkgNjcgSDI5IEE4LDggMCwwIDEsMjEgNTkgVjUzIEE4LDggMCwwIDEsMjkgNDUgWiBNMzQsNjggSDc0IEE4LDggMCwwIDEsODIgNzYgVjgyIEE4LDggMCwwIDEsNzQgOTAgSDM0IEE4LDggMCwwIDEsMjYgODIgVjc2IEE4LDggMCwwIDEsMzQgNjggWiIgLz4KPC92ZWN0b3I+Cg=='), 'UTF-8')
 }
-''', 'UTF-8')
-
-def esrganModel = file('app/src/main/assets/ESRGAN.tflite')
-
-tasks.register('prepareEsrganModel') {
-    outputs.file(esrganModel)
-
-    doLast {
-        if (esrganModel.exists() && esrganModel.length() > 1_000_000L) {
-            println 'ESRGAN model already present.'
-            return
-        }
-
-        esrganModel.parentFile.mkdirs()
-
-        def temp = new File(esrganModel.parentFile, 'ESRGAN.tflite.part')
-        if (temp.exists()) temp.delete()
-
-        println 'Downloading TensorFlow Lite ESRGAN model...'
-
-        new URL('https://storage.googleapis.com/download.tensorflow.org/models/tflite/esrgan/ESRGAN.tflite')
-                .withInputStream { input ->
-                    temp.withOutputStream { output ->
-                        output << input
-                    }
-                }
-
-        if (temp.length() < 1_000_000L) {
-            temp.delete()
-            throw new GradleException('Downloaded ESRGAN model is unexpectedly small.')
-        }
-
-        if (esrganModel.exists()) esrganModel.delete()
-        if (!temp.renameTo(esrganModel)) {
-            esrganModel.bytes = temp.bytes
-            temp.delete()
-        }
-    }
-}
-
-gradle.projectsEvaluated {
-    project(':app').tasks.named('preBuild').configure {
-        dependsOn(rootProject.tasks.named('prepareEsrganModel'))
-    }
-}
-
 
 def sourceFile = file('app/src/main/java/com/imagesplitter/app/MainActivity.java')
-
 if (sourceFile.exists()) {
     String src = sourceFile.getText('UTF-8')
-    String original = src
 
-    def replaceOnce = { String oldText, String newText, String marker ->
+    def patch = { String old64, String new64, String marker ->
+        String oldText = decodeText(old64)
+        String newText = decodeText(new64)
+
         if (src.contains(oldText)) {
             src = src.replace(oldText, newText)
         } else if (!src.contains(marker)) {
-            throw new GradleException("ImageSplitter UI patch v4 could not find expected source block: ${marker}")
+            throw new GradleException('ImageSplitter UI patch missing source block: ' + marker)
         }
     }
-
-    // Stable home canvas again, just slightly taller than stock to avoid lower clipping.
-    replaceOnce(
-'''        int contentHeight = mode == 0 ? 1960 : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
-'''        int contentHeight = mode == 0 ? 2105 : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
-'mode == 0 ? 2105'
-    )
-
-    replaceOnce(
-'''        scroll.setPadding(0, 0, 0, dp(28));''',
-'''        scroll.setPadding(0, 0, 0, dp(72));''',
-'scroll.setPadding(0, 0, 0, dp(72));'
-    )
-
-    // Border weight closer to Lovable.
-    replaceOnce(
-'''            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(1.6f);
-            p.setColor(color);
-            c.drawRoundRect(l, t, r, b, radius, radius, p);
-            p.setStrokeWidth(.45f);''',
-'''            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(2.05f);
-            p.setColor(color);
-            c.drawRoundRect(l, t, r, b, radius, radius, p);
-            p.setStrokeWidth(.6f);''',
-'p.setStrokeWidth(2.05f);'
-    )
-
-    // Headings a bit heavier; regular text unchanged.
-    replaceOnce(
-'''            p.setTypeface(handwriting); p.setTextAlign(Paint.Align.CENTER);
-            p.setTextSize(size);''',
-'''            p.setTypeface(handwriting); p.setTextAlign(Paint.Align.CENTER);
-            p.setFakeBoldText(size >= 24f);
-            p.setTextSize(size);''',
-'p.setFakeBoldText(size >= 24f);'
-    )
-
-    replaceOnce(
-'''            p.setTypeface(handwriting);
-            p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);
-            p.setTextSize(size);''',
-'''            p.setTypeface(handwriting);
-            p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);
-            p.setFakeBoldText(size >= 24f);
-            p.setTextSize(size);''',
-'p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);\n            p.setFakeBoldText(size >= 24f);'
-    )
-
-    // Critical scroll/render fix:
-    // group() was rendering every animated section into a layer capped at y=1400,
-    // so Preview / Split & Export below that point were literally clipped away.
-    replaceOnce(
-'''            int layer = c.saveLayerAlpha(0,0,720,1400,(int)(255*smooth));''',
-'''            int layer = c.saveLayerAlpha(0,0,720,contentHeight,(int)(255*smooth));''',
-'c.saveLayerAlpha(0,0,720,contentHeight'
-    )
-
-    // New Lovable-like Split Direction icons only.
-    replaceOnce(
-'''        private boolean isPressed(float l,float t,float r,float b){''',
-'''        private void splitDirectionArt(Canvas c, String value, float l, float t, float r, float b,
-                                       boolean selected, boolean horizontalIcon, Runnable click) {
-            float inset = isPressed(l,t,r,b) ? 2.2f : 0f;
-            fill(c,l+inset,t+inset,r-inset,b-inset,14,
-                    selected?wash():(dark?0xFF202D37:0xFFF2F0EA));
-            outline(c,l+inset,t+inset,r-inset,b-inset,14,
-                    selected?accent:alpha(ink(),170));
-
-            if(selected){
-                p.setStyle(Paint.Style.STROKE);
-                p.setStrokeWidth(.85f);
-                p.setColor(alpha(accent,108));
-                c.drawRoundRect(l+3,t+3,r-3,b-3,11,11,p);
-            }
-
-            float iconCenterX = l + 78f;
-            float iconCenterY = (t + b) / 2f;
-
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(3.6f);
-            p.setStrokeCap(Paint.Cap.ROUND);
-            p.setStrokeJoin(Paint.Join.ROUND);
-            p.setColor(ink());
-
-            if (horizontalIcon) {
-                // Three flat rounded horizontal layers, no perspective.
-                float[] widths = new float[]{48f, 56f, 52f};
-                float itemH = 12f;
-                float gap = 6f;
-                for (int i = 0; i < 3; i++) {
-                    float w = widths[i];
-                    float top = iconCenterY - itemH * 1.5f - gap + i * (itemH + gap);
-                    c.drawRoundRect(iconCenterX - w/2f, top, iconCenterX + w/2f, top + itemH,
-                            5f, 5f, p);
-                }
-            } else {
-                // Three nested pointed-end vertical family shapes, side-by-side.
-                float outerH = 38f;
-                float[] widths = new float[]{20f, 20f, 20f};
-                float gap = 8f;
-                for (int i = 0; i < 3; i++) {
-                    float cx = iconCenterX - (widths.length - 1) * (gap + 2f) / 2f + i * (gap + 12f);
-                    float w = widths[i];
-                    float h = outerH - i * 3f;
-                    Path q = new Path();
-                    q.moveTo(cx - w/2f, iconCenterY);
-                    q.lineTo(cx - 2f, iconCenterY - h/2f);
-                    q.lineTo(cx + 2f, iconCenterY - h/2f);
-                    q.lineTo(cx + w/2f, iconCenterY);
-                    q.lineTo(cx + 2f, iconCenterY + h/2f);
-                    q.lineTo(cx - 2f, iconCenterY + h/2f);
-                    q.close();
-                    c.drawPath(q, p);
-                }
-            }
-
-            p.setStyle(Paint.Style.FILL);
-            txt(c, value, l + (r - l) * .66f, (t + b) / 2f + 8, r - l - 122f, 23, ink());
-            hit(l,t,r,b,click);
-        }
-
-        private boolean isPressed(float l,float t,float r,float b){''',
-'private void splitDirectionArt(Canvas c, String value'
-    )
-
-    // Approved three-layer Lovable logo.
-    replaceOnce(
-'''        private void logo(Canvas c,float center,float top,float width,float height) {
-            float l=center-width/2f,r=center+width/2f,unit=height/3f;
-            p.setStyle(Paint.Style
+    patch('ICAgICAgICBpbnQgY29udGVudEhlaWdodCA9IG1vZGUgPT0gMCA/IDE5NjAgOiBtb2RlID09IDEgPyAxNDUwIDogbW9kZSA9PSAzID8gMTU3MCA6IDE0NTA7', 'ICAgICAgICBpbnQgY29udGVudEhlaWdodCA9IG1vZGUgPT0gMCA/IDIxMDUgOiBtb2RlID09IDEgPyAxNDUwIDogbW9kZSA9PSAzID8gMTU3MCA6IDE0NTA7', "mode == 0 ? 2105")
+    patch('ICAgICAgICBzY3JvbGwuc2V0UGFkZGluZygwLCAwLCAwLCBkcCgyOCkpOw==', 'ICAgICAgICBzY3JvbGwuc2V0UGFkZGluZygwLCAwLCAwLCBkcCg3MikpOw==', "scroll.setPadding(0, 0, 0, dp(72));")
+    patch('ICAgICAgICAgICAgcC5zZXRTdHlsZShQYWludC5TdHlsZS5TVFJPS0UpOwogICAgICAgICAgICBwLnNldFN0cm9rZVdpZHRoKDEuNmYpOwogICAgICAgICAgICBwLnNldENvbG9yKGNvbG9yKTsKICAgICAgICAgICAgYy5kcmF3Um91bmRSZWN0KGwsIHQsIHIsIGIsIHJhZGl1cywgcmFkaXVzLCBwKTsKICAgICAgICAgICAgcC5zZXRTdHJva2VXaWR0aCguNDVmKTs=', 'ICAgICAgICAgICAgcC5zZXRTdHlsZShQYWludC5TdHlsZS5TVFJPS0UpOwogICAgICAgICAgICBwLnNldFN0cm9rZVdpZHRoKDIuMDVmKTsKICAgICAgICAgICAgcC5zZXRDb2xvcihjb2xvcik7CiAgICAgICAgICAgIGMuZHJhd1JvdW5kUmVjdChsLCB0LCByLCBiLCByYWRpdXMsIHJhZGl1cywgcCk7CiAgICAgICAgICAgIHAuc2V0U3Ryb2tlV2lkdGgoLjZmKTs=', "p.setStrokeWidth(2.05f);")
+    patch('ICAgICAgICAgICAgaW50IGxheWVyID0gYy5zYXZlTGF5ZXJBbHBoYSgwLDAsNzIwLDE0MDAsKGludCkoMjU1KnNtb290aCkpOw==', 'ICAgICAgICAgICAgaW50IGxheWVyID0gYy5zYXZlTGF5ZXJBbHBoYSgwLDAsNzIwLGNvbnRlbnRIZWlnaHQsKGludCkoMjU1KnNtb290aCkpOw==', "c.saveLayerAlpha(0,0,720,contentHeight")
+    patch('ICAgIHByaXZhdGUgYm9vbGVhbiBkYXJrLCBob3Jpem9udGFsID0gdHJ1ZSwgcHJvY2Vzc2luZzs=', 'ICAgIHByaXZhdGUgYm9vbGVhbiBkYXJrLCBob3Jpem9udGFsID0gdHJ1ZSwgcHJvY2Vzc2luZzsKICAgIHByaXZhdGUgdm9sYXRpbGUgYm9vbGVhbiBhaUVuaGFuY2luZzs=', "aiEnhancing")
+    patch('ICAgICAgICBwcml2YXRlIGZsb2F0IHN4LCBzeSwgdG91Y2hYLCB0b3VjaFk7', 'ICAgICAgICBwcml2YXRlIGZsb2F0IHN4LCBzeSwgdG91Y2hYLCB0b3VjaFk7CiAgICAgICAgcHJpdmF0ZSBmaW5hbCBmbG9hdCByZXNwb25zaXZlWTsKICAgICAgICBwcml2YXRlIGZpbmFsIGZsb2F0IHJlc3BvbnNpdmVUZXh0Ow==', "private final float responsiveY;")
+    patch('ICAgICAgICBTa2V0Y2hTY3JlZW4oaW50IGNvbnRlbnRIZWlnaHQpIHsKICAgICAgICAgICAgc3VwZXIoTWFpbkFjdGl2aXR5LnRoaXMpOwogICAgICAgICAgICB0aGlzLmNvbnRlbnRIZWlnaHQgPSBjb250ZW50SGVpZ2h0OwogICAgICAgICAgICBpbnQgdGlsZSA9IE1hdGgubWF4KDgsIGRwKDcpKTs=', 'ICAgICAgICBTa2V0Y2hTY3JlZW4oaW50IGNvbnRlbnRIZWlnaHQpIHsKICAgICAgICAgICAgc3VwZXIoTWFpbkFjdGl2aXR5LnRoaXMpOwogICAgICAgICAgICB0aGlzLmNvbnRlbnRIZWlnaHQgPSBjb250ZW50SGVpZ2h0OwoKICAgICAgICAgICAgYW5kcm9pZC51dGlsLkRpc3BsYXlNZXRyaWNzIGRtID0gZ2V0UmVzb3VyY2VzKCkuZ2V0RGlzcGxheU1ldHJpY3MoKTsKICAgICAgICAgICAgZmxvYXQgc2NyZWVuQXNwZWN0ID0gZG0uaGVpZ2h0UGl4ZWxzIC8gKGZsb2F0KU1hdGgubWF4KDEsIGRtLndpZHRoUGl4ZWxzKTsKICAgICAgICAgICAgZmxvYXQgd2lkdGhEcCA9IGRtLndpZHRoUGl4ZWxzIC8gTWF0aC5tYXgoMWYsIGRtLmRlbnNpdHkpOwoKICAgICAgICAgICAgcmVzcG9uc2l2ZVkgPSBNYXRoLm1heCgxZiwgTWF0aC5taW4oMS4xM2YsCiAgICAgICAgICAgICAgICAgICAgMWYgKyBNYXRoLm1heCgwZiwgc2NyZWVuQXNwZWN0IC0gMS43OGYpICogLjI4ZikpOwoKICAgICAgICAgICAgcmVzcG9uc2l2ZVRleHQgPSBNYXRoLm1heCgxZiwgTWF0aC5taW4oMS4xMGYsCiAgICAgICAgICAgICAgICAgICAgMWYgKyBNYXRoLm1heCgwZiwgNDEwZiAtIHdpZHRoRHApIC8gMTEwMGYpKTsKCiAgICAgICAgICAgIGludCB0aWxlID0gTWF0aC5tYXgoOCwgZHAoNykpOw==', "responsiveY = Math.max(1f")
+    patch('ICAgICAgICAgICAgc2V0TWVhc3VyZWREaW1lbnNpb24od2lkdGgsIE1hdGgubWF4KDEsIE1hdGgucm91bmQod2lkdGggKiBjb250ZW50SGVpZ2h0IC8gNzIwZikpKTs=', 'ICAgICAgICAgICAgc2V0TWVhc3VyZWREaW1lbnNpb24od2lkdGgsIE1hdGgubWF4KDEsCiAgICAgICAgICAgICAgICAgICAgTWF0aC5yb3VuZCh3aWR0aCAqIGNvbnRlbnRIZWlnaHQgLyA3MjBmICogcmVzcG9uc2l2ZVkpKSk7', "contentHeight / 720f * responsiveY")
+    patch('ICAgICAgICAgICAgc3ggPSBnZXRXaWR0aCgpIC8gNzIwZjsKICAgICAgICAgICAgc3kgPSBzeDs=', 'ICAgICAgICAgICAgc3ggPSBnZXRXaWR0aCgpIC8gNzIwZjsKICAgICAgICAgICAgc3kgPSBzeCAqIHJlc3BvbnNpdmVZOw==', "sy = sx * responsiveY;")
+    patch('ICAgICA
