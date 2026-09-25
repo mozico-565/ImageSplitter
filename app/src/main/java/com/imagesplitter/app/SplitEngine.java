@@ -130,6 +130,15 @@ final class SplitEngine {
 
     static List<Uri> export(ContentResolver resolver, Uri source, int count, boolean horizontal,
                             int target, boolean hint, int accentColor, String folder) throws Exception {
+        return export(resolver, source, count, horizontal, target, hint, accentColor, folder,
+                null, null);
+    }
+
+    interface Progress { void onPart(int current, int total); void onFallback(); }
+
+    static List<Uri> export(ContentResolver resolver, Uri source, int count, boolean horizontal,
+                            int target, boolean hint, int accentColor, String folder,
+                            AiUpscaler upscaler, Progress progress) throws Exception {
         int[] size = dimensions(resolver, source);
         int[] rawSize = rawDimensions(resolver, source);
         int orientation = orientation(resolver, source);
@@ -141,6 +150,7 @@ final class SplitEngine {
             if (decoder == null) throw new Exception("Unsupported image");
             try {
                 for (int i = 0; i < count; i++) {
+                    if (progress != null) progress.onPart(i + 1, count);
                     Rect rect = partRect(size[0], size[1], horizontal, count, i);
                     int[] out = outputPartDimensions(size[0], size[1], horizontal, count, i, target);
                     if ((long)out[0] * out[1] > 48_000_000L)
@@ -154,6 +164,17 @@ final class SplitEngine {
                     if (out[0] != sourcePart.getWidth() || out[1] != sourcePart.getHeight()) {
                         part = Bitmap.createScaledBitmap(sourcePart, out[0], out[1], true);
                         sourcePart.recycle();
+                    }
+                    if (upscaler != null) {
+                        try {
+                            Bitmap enhanced = upscaler.enhance(part);
+                            part.recycle();
+                            part = enhanced;
+                        } catch (Exception | OutOfMemoryError failure) {
+                            if (progress != null) progress.onFallback();
+                            part.recycle();
+                            throw new AiUpscaler.Failed(failure);
+                        }
                     }
                     if (hint && count > 1) {
                         Bitmap mutable = part.copy(Bitmap.Config.ARGB_8888, true);
