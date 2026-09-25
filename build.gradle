@@ -1,3 +1,446 @@
 plugins {
     id 'com.android.application' version '8.7.3' apply false
 }
+
+/*
+ * ImageSplitter Lovable UI parity patch
+ *
+ * This single root Gradle file applies the approved UI fixes automatically
+ * at build time, while preserving the current native Android architecture.
+ */
+
+def sourceFile = file('app/src/main/java/com/imagesplitter/app/MainActivity.java')
+
+if (sourceFile.exists()) {
+    String src = sourceFile.getText('UTF-8')
+    String original = src
+
+    def replaceOnce = { String oldText, String newText, String marker ->
+        if (src.contains(oldText)) {
+            src = src.replace(oldText, newText)
+        } else if (!src.contains(marker)) {
+            throw new GradleException("ImageSplitter UI patch could not find expected source block: ${marker}")
+        }
+    }
+
+    replaceOnce(
+'''        int contentHeight = mode == 0 ? 1960 : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
+'''        int contentHeight = mode == 0
+                ? Math.round(1080f + ((preview != null && horizontal)
+                        ? Math.max(665f, parts * 145f + 85f) : 665f) + 250f)
+                : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
+'Math.round(1080f + ((preview != null && horizontal)'
+    )
+
+    replaceOnce(
+'''        scroll.setPadding(0, 0, 0, dp(28));''',
+'''        scroll.setPadding(0, 0, 0, dp(72));''',
+'scroll.setPadding(0, 0, 0, dp(72));'
+    )
+
+    replaceOnce(
+'''            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(1.6f);
+            p.setColor(color);
+            c.drawRoundRect(l, t, r, b, radius, radius, p);
+            p.setStrokeWidth(.45f);''',
+'''            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(2.15f);
+            p.setColor(color);
+            c.drawRoundRect(l, t, r, b, radius, radius, p);
+            p.setStrokeWidth(.65f);''',
+'p.setStrokeWidth(2.15f);'
+    )
+
+    replaceOnce(
+'''            p.setTypeface(handwriting); p.setTextAlign(Paint.Align.CENTER);
+            p.setTextSize(size);''',
+'''            p.setTypeface(handwriting); p.setTextAlign(Paint.Align.CENTER);
+            p.setFakeBoldText(size >= 24f);
+            p.setTextSize(size);''',
+'p.setFakeBoldText(size >= 24f);'
+    )
+
+    replaceOnce(
+'''            p.setTypeface(handwriting);
+            p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);
+            p.setTextSize(size);''',
+'''            p.setTypeface(handwriting);
+            p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);
+            p.setFakeBoldText(size >= 24f);
+            p.setTextSize(size);''',
+'p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);\n            p.setFakeBoldText(size >= 24f);'
+    )
+
+    replaceOnce(
+'''        private boolean isPressed(float l,float t,float r,float b){''',
+'''        private void splitDirectionArt(Canvas c, String value, float l, float t, float r, float b,
+                                       boolean selected, boolean horizontalIcon, Runnable click) {
+            float inset = isPressed(l,t,r,b) ? 2.2f : 0f;
+            fill(c,l+inset,t+inset,r-inset,b-inset,14,
+                    selected?wash():(dark?0xFF202D37:0xFFF2F0EA));
+            outline(c,l+inset,t+inset,r-inset,b-inset,14,
+                    selected?accent:alpha(ink(),170));
+
+            if(selected){
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(.9f);
+                p.setColor(alpha(accent,120));
+                c.drawRoundRect(l+3,t+3,r-3,b-3,11,11,p);
+            }
+
+            float iconX=l+82f;
+            float iconY=(t+b)/2f;
+
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(4.1f);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setStrokeJoin(Paint.Join.ROUND);
+            p.setColor(ink());
+
+            if(horizontalIcon){
+                for(int layer=0;layer<3;layer++){
+                    float y=iconY-22f+layer*15f;
+                    Path q=new Path();
+                    q.moveTo(iconX-29f,y);
+                    q.lineTo(iconX,y-12f);
+                    q.lineTo(iconX+29f,y);
+                    q.lineTo(iconX,y+12f);
+                    q.close();
+                    c.drawPath(q,p);
+                }
+            } else {
+                for(int panel=0;panel<3;panel++){
+                    float x=iconX-27f+panel*18f;
+                    Path q=new Path();
+                    q.moveTo(x,iconY-22f);
+                    q.lineTo(x+9f,iconY-30f);
+                    q.lineTo(x+22f,iconY+21f);
+                    q.lineTo(x+13f,iconY+29f);
+                    q.close();
+                    c.drawPath(q,p);
+                }
+            }
+
+            p.setStyle(Paint.Style.FILL);
+            txt(c,value,l+(r-l)*.66f,(t+b)/2f+8,r-l-118f,23,ink());
+            hit(l,t,r,b,click);
+        }
+
+        private boolean isPressed(float l,float t,float r,float b){''',
+'private void splitDirectionArt(Canvas c, String value'
+    )
+
+    replaceOnce(
+'''        private void logo(Canvas c,float center,float top,float width,float height) {
+            float l=center-width/2f,r=center+width/2f,unit=height/3f;
+            p.setStyle(Paint.Style.FILL);p.setColor(background);
+            c.drawRoundRect(l+5,top,r-2,top+unit-3,8,8,p);
+            c.drawRoundRect(l,top+unit-1,r,top+unit*2-4,7,7,p);
+            c.drawRoundRect(l+3,top+unit*2-2,r+3,top+height,10,10,p);
+            outline(c,l+5,top,r-2,top+unit-3,8,ink());
+            outline(c,l,top+unit-1,r,top+unit*2-4,7,ink());
+            outline(c,l+3,top+unit*2-2,r+3,top+height,10,ink());
+        }''',
+'''        private void logo(Canvas c,float center,float top,float width,float height) {
+            float topW=width*.72f;
+            float middleW=width*.90f;
+            float bottomW=width*.80f;
+            float itemH=height*.245f;
+            float gap=height*.075f;
+            float y1=top;
+            float y2=y1+itemH+gap;
+            float y3=y2+itemH+gap;
+
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(Math.max(3.2f,width*.045f));
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setStrokeJoin(Paint.Join.ROUND);
+            p.setColor(ink());
+
+            c.drawRoundRect(center-topW/2f,y1,center+topW/2f,y1+itemH,
+                    itemH*.42f,itemH*.42f,p);
+            c.drawRoundRect(center-middleW/2f,y2,center+middleW/2f,y2+itemH,
+                    itemH*.42f,itemH*.42f,p);
+            c.drawRoundRect(center-bottomW/2f,y3,center+bottomW/2f,y3+itemH,
+                    itemH*.42f,itemH*.42f,p);
+
+            p.setStyle(Paint.Style.FILL);
+        }''',
+'float topW=width*.72f;'
+    )
+
+    replaceOnce(
+'''        private void homeArt(Canvas c) {
+            group(c,0,()->{''',
+'''        private void homeArt(Canvas c) {
+            final float previewTop=1080f;
+            final float previewHeight=(preview!=null&&horizontal)
+                    ? Math.max(665f,parts*145f+85f) : 665f;
+            final float previewBottom=previewTop+previewHeight;
+            final float exportTop=previewBottom+35f;
+            final float exportBottom=exportTop+102f;
+
+            group(c,0,()->{''',
+'final float previewHeight=(preview!=null&&horizontal)'
+    )
+
+    replaceOnce(
+'''                selectArt(c,tr("▱  Horizontal","▱  أفقي","▱  Horizontal"),
+                        40,587,356,659,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
+                selectArt(c,tr("⟪  Vertical","⟪  عمودي","⟪  Vertical"),
+                        364,587,680,659,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});''',
+'''                splitDirectionArt(c,tr("Horizontal","أفقي","Horizontal"),
+                        40,587,356,659,horizontal,true,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
+                splitDirectionArt(c,tr("Vertical","عمودي","Vertical"),
+                        364,587,680,659,!horizontal,false,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});''',
+'splitDirectionArt(c,tr("Horizontal"'
+    )
+
+    replaceOnce(
+'''            group(c,4,()->{
+                box(c,22,1080,698,1745,22,paper());
+                left(c,tr("Preview","المعاينة","Vista previa"),42,1128,610,29,ink());
+                if(preview==null) {
+                    pictureIcon(c,360,1370);
+                    txt(c,tr("Your split preview will appear here","ستظهر معاينة التقسيم هنا",
+                            "La vista previa aparecerá aquí"),360,1460,590,25,muted);
+                } else previewTiles(c,preview,58,1160,662,1705);
+            });
+            group(c,5,()->{
+                buttonArt(c,tr("▱   Split & Export","▱   تقسيم وتصدير",
+                        "▱   Cortar y exportar"),22,1780,698,1882,true,MainActivity.this::export);
+            });
+            if(sizeTip) drawSizeTip(c);
+            if(processing) processingOverlay(c);''',
+'''            group(c,4,()->{
+                box(c,22,previewTop,698,previewBottom,22,paper());
+                left(c,tr("Preview","المعاينة","Vista previa"),
+                        42,previewTop+48,610,29,ink());
+
+                if(preview==null) {
+                    float cy=(previewTop+previewBottom)/2f;
+                    pictureIcon(c,360,cy-20);
+                    txt(c,tr("Your split preview will appear here","ستظهر معاينة التقسيم هنا",
+                            "La vista previa aparecerá aquí"),
+                            360,cy+70,590,25,muted);
+                } else {
+                    previewTiles(c,preview,58,previewTop+80,662,previewBottom-40);
+                }
+            });
+
+            group(c,5,()->{
+                buttonArt(c,tr("▱   Split & Export","▱   تقسيم وتصدير",
+                        "▱   Cortar y exportar"),
+                        22,exportTop,698,exportBottom,true,MainActivity.this::export);
+            });
+
+            if(sizeTip) drawSizeTip(c);
+            if(processing) processingOverlay(c,exportTop,exportBottom);''',
+'if(processing) processingOverlay(c,exportTop,exportBottom);'
+    )
+
+    replaceOnce(
+'''        private void drawSizeTip(Canvas c) {
+            float anchor=40+sizeTipChoice*161f+75.5f;
+            Path notch=new Path();notch.moveTo(anchor-16,1072);notch.lineTo(anchor,1050);
+            notch.lineTo(anchor+16,1072);notch.close();p.setColor(wash());c.drawPath(notch,p);
+            box(c,42,1070,678,1348,22,wash());
+            String[] labels={tr("Original","الأصلي","Original"),"750 px","1080 px",
+                    tr("Custom","مخصص","Personalizado")};
+            txt(c,tr("Example (","مثال (","Ejemplo (")+labels[sizeTipChoice]+")",360,1110,590,24,ink());
+            if(sourceWidth<2||sourceHeight<2) {
+                txt(c,tr("Select an image to calculate real dimensions",
+                        "اختر صورة لحساب المقاسات الحقيقية",
+                        "Selecciona una imagen para calcular"),360,1210,570,24,muted);
+            } else {
+                int target=sizeTipChoice==0?0:sizeTipChoice==1?750:sizeTipChoice==2?1080:custom;
+                int totalW=horizontal?0:0,totalH=horizontal?0:0;
+                int firstW=0,firstH=0;
+                for(int i=0;i<parts;i++){
+                    int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,target);
+                    if(i==0){firstW=d[0];firstH=d[1];}
+                    if(horizontal){totalW=Math.max(totalW,d[0]);totalH+=d[1];}
+                    else{totalW+=d[0];totalH=Math.max(totalH,d[1]);}
+                }
+                previewTiles(c,preview,70,1130,315,1305);
+                line(c,344,1138,344,1314,ink(),1f);
+                left(c,tr("Each part:","كل جزء:","Cada parte:"),375,1178,260,21,muted);
+                left(c,firstW+" × "+firstH+" px",375,1212,260,25,ink());
+                left(c,tr("Total joined:","الإجمالي بعد الجمع:","Total unido:"),375,1255,260,21,muted);
+                left(c,totalW+" × "+totalH+" px · "+parts+" "+tr("parts","أجزاء","partes"),375,1292,275,22,ink());
+            }
+            hit(42,1070,678,1348,()->{sizeTip=false;invalidate();});
+        }''',
+'''        private void drawSizeTip(Canvas c) {
+            float anchor=40+sizeTipChoice*161f+75.5f;
+            int tipPaper=dark?0xFF27313B:0xFFF3F1EA;
+
+            Path notch=new Path();
+            notch.moveTo(anchor-17,1071);
+            notch.lineTo(anchor,1049);
+            notch.lineTo(anchor+17,1071);
+            notch.close();
+            p.setColor(tipPaper);
+            c.drawPath(notch,p);
+
+            fill(c,42,1070,678,1366,22,tipPaper);
+            outline(c,42,1070,678,1366,22,ink());
+
+            String[] labels={tr("Original","الأصلي","Original"),"750 px","1080 px",
+                    tr("Custom","مخصص","Personalizado")};
+
+            left(c,tr("Example (","مثال (","Ejemplo (")+labels[sizeTipChoice]+")",
+                    68,1118,560,25,ink());
+
+            if(sourceWidth<2||sourceHeight<2) {
+                txt(c,tr("Select an image to calculate real dimensions",
+                        "اختر صورة لحساب المقاسات الحقيقية",
+                        "Selecciona una imagen para calcular"),
+                        360,1228,570,23,muted);
+            } else {
+                int target=sizeTipChoice==0?0:sizeTipChoice==1?750:sizeTipChoice==2?1080:custom;
+                int totalW=0,totalH=0;
+                int firstW=0,firstH=0;
+
+                for(int i=0;i<parts;i++){
+                    int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,target);
+                    if(i==0){firstW=d[0];firstH=d[1];}
+                    if(horizontal){
+                        totalW=Math.max(totalW,d[0]);
+                        totalH+=d[1];
+                    } else {
+                        totalW+=d[0];
+                        totalH=Math.max(totalH,d[1]);
+                    }
+                }
+
+                previewTiles(c,preview,70,1145,320,1300);
+                line(c,345,1138,345,1338,ink(),1.45f);
+
+                left(c,"↔  "+firstW+" px",70,1332,125,18,muted);
+                left(c,"↕  "+firstH+" px",205,1332,125,18,muted);
+
+                left(c,tr("Each part:","كل جزء:","Cada parte:"),
+                        375,1175,260,20,muted);
+                left(c,firstW+" × "+firstH+" px",
+                        375,1213,260,27,ink());
+
+                left(c,tr("Joined size:","الحجم بعد الجمع:","Tamaño unido:"),
+                        375,1264,260,20,muted);
+                left(c,totalW+" × "+totalH+" px",
+                        375,1304,275,27,ink());
+                left(c,"("+parts+" "+tr("parts","أجزاء","partes")+")",
+                        375,1338,260,20,muted);
+            }
+
+            hit(42,1070,678,1366,()->{sizeTip=false;invalidate();});
+        }''',
+'int tipPaper=dark?0xFF27313B:0xFFF3F1EA;'
+    )
+
+    replaceOnce(
+'''        private void processingOverlay(Canvas c) {
+            fill(c,42,1640,678,1888,24,alpha(background,238));
+            outline(c,42,1640,678,1888,24,accent);
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(8);p.setColor(alpha(accent,80));
+            c.drawCircle(360,1715,34,p);p.setColor(accent);
+            c.drawArc(new RectF(326,1681,394,1749),-90,120,false,p);p.setStyle(Paint.Style.FILL);
+            txt(c,tr("Splitting & saving…","جارٍ التقسيم والحفظ…","Cortando y guardando…"),360,1795,560,28,ink());
+            txt(c,tr("Large images may take a moment","قد تستغرق الصور الكبيرة لحظات",
+                    "Las imágenes grandes pueden tardar"),360,1840,560,20,muted);
+        }''',
+'''        private void processingOverlay(Canvas c,float exportTop,float exportBottom) {
+            float top=exportTop-138f;
+            float bottom=exportBottom+8f;
+
+            fill(c,42,top,678,bottom,24,alpha(background,238));
+            outline(c,42,top,678,bottom,24,accent);
+
+            float cy=top+74f;
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(8);
+            p.setColor(alpha(accent,80));
+            c.drawCircle(360,cy,34,p);
+
+            p.setColor(accent);
+            c.drawArc(new RectF(326,cy-34,394,cy+34),-90,120,false,p);
+            p.setStyle(Paint.Style.FILL);
+
+            txt(c,tr("Splitting & saving…","جارٍ التقسيم والحفظ…","Cortando y guardando…"),
+                    360,cy+80,560,28,ink());
+            txt(c,tr("Large images may take a moment","قد تستغرق الصور الكبيرة لحظات",
+                    "Las imágenes grandes pueden tardar"),
+                    360,cy+122,560,20,muted);
+        }''',
+'private void processingOverlay(Canvas c,float exportTop,float exportBottom)'
+    )
+
+    replaceOnce(
+'''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.5f);p.setColor(ink());''',
+'''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.9f);p.setColor(ink());''',
+'p.setStrokeWidth(1.9f);p.setColor(ink());'
+    )
+
+    replaceOnce(
+'''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1f);p.setColor(alpha(ink(),70));''',
+'''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.35f);p.setColor(alpha(ink(),82));''',
+'p.setStrokeWidth(1.35f);p.setColor(alpha(ink(),82));'
+    )
+
+    if (src != original) {
+        sourceFile.write(src, 'UTF-8')
+        println 'Applied ImageSplitter Lovable UI parity patch.'
+    } else {
+        println 'ImageSplitter Lovable UI parity patch already applied.'
+    }
+}
+
+def launcherFile = file('app/src/main/res/drawable/ic_launcher_sketch.xml')
+if (launcherFile.exists()) {
+    launcherFile.setText('''<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#101820"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#F6F7F8"
+        android:strokeWidth="4.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="
+            M35,22 H73
+            A8,8 0,0 1,81 30
+            V36
+            A8,8 0,0 1,73 44
+            H35
+            A8,8 0,0 1,27 36
+            V30
+            A8,8 0,0 1,35 22 Z
+
+            M29,45 H79
+            A8,8 0,0 1,87 53
+            V59
+            A8,8 0,0 1,79 67
+            H29
+            A8,8 0,0 1,21 59
+            V53
+            A8,8 0,0 1,29 45 Z
+
+            M34,68 H74
+            A8,8 0,0 1,82 76
+            V82
+            A8,8 0,0 1,74 90
+            H34
+            A8,8 0,0 1,26 82
+            V76
+            A8,8 0,0 1,34 68 Z" />
+</vector>
+''', 'UTF-8')
+}
