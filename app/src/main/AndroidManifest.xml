@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:allowBackup="false" android:icon="@drawable/brand_reference" android:roundIcon="@drawable/brand_reference" android:label="Image Splitter" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false">
+    <application android:allowBackup="false" android:icon="@drawable/ic_launcher_sketch" android:roundIcon="@drawable/ic_launcher_sketch" android:label="Image Splitter" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="locale|layoutDirection|uiMode|screenSize|orientation" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
