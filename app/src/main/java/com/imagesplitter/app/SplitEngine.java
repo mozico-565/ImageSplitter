@@ -8,6 +8,8 @@ import android.graphics.BitmapRegionDecoder;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.media.ExifInterface;
 import android.net.Uri;
@@ -22,6 +24,7 @@ import java.util.List;
 /** Slices the source in source pixels. Region decoding avoids loading large prints all at once. */
 final class SplitEngine {
     static final int ORIGINAL = 0, PX_750 = 750, PX_1080 = 1080, CUSTOM = -1;
+    static final int MODE_HORIZONTAL = 0, MODE_VERTICAL = 1, MODE_GRID = 2;
 
     private static int[] rawDimensions(ContentResolver resolver, Uri source) throws Exception {
         BitmapFactory.Options options = new BitmapFactory.Options();
@@ -78,12 +81,39 @@ final class SplitEngine {
     }
 
     static Rect partRect(int width, int height, boolean horizontal, int count, int index) {
-        if (horizontal) {
-            return new Rect(0, boundary(height, count, index),
-                    width, boundary(height, count, index + 1));
+        return partRect(width, height,
+                horizontal ? MODE_HORIZONTAL : MODE_VERTICAL, count, index);
+    }
+
+    static int[] splitShape(int width, int height, int mode, int count) {
+        if (mode == MODE_HORIZONTAL) return new int[]{1, count};
+        if (mode == MODE_VERTICAL) return new int[]{count, 1};
+        int bestColumns = count;
+        int bestRows = 1;
+        double sourceRatio = width / (double)Math.max(1, height);
+        double bestScore = Double.MAX_VALUE;
+        for (int rows = 2; rows <= count; rows++) {
+            if (count % rows != 0) continue;
+            int columns = count / rows;
+            if (columns < 2) continue;
+            double score = Math.abs(Math.log((columns / (double)rows) / sourceRatio));
+            if (score < bestScore) {
+                bestScore = score;
+                bestColumns = columns;
+                bestRows = rows;
+            }
         }
-        return new Rect(boundary(width, count, index), 0,
-                boundary(width, count, index + 1), height);
+        return new int[]{bestColumns, bestRows};
+    }
+
+    static Rect partRect(int width, int height, int mode, int count, int index) {
+        if (index < 0 || index >= count) throw new IllegalArgumentException("Invalid part index");
+        int[] shape = splitShape(width, height, mode, count);
+        int columns = shape[0];
+        int row = index / columns;
+        int column = index % columns;
+        return new Rect(boundary(width, columns, column), boundary(height, shape[1], row),
+                boundary(width, columns, column + 1), boundary(height, shape[1], row + 1));
     }
 
     static int boundary(int length, int count, int boundaryIndex) {
@@ -109,29 +139,49 @@ final class SplitEngine {
      */
     static int[] outputPartDimensions(int width, int height, boolean horizontal,
                                       int count, int index, int target) {
-        if (target == ORIGINAL) {
-            int partWidth = horizontal ? width : boundary(width, count, index + 1) - boundary(width, count, index);
-            int partHeight = horizontal ? boundary(height, count, index + 1) - boundary(height, count, index) : height;
-            return new int[]{partWidth, partHeight};
-        }
+        return outputPartDimensions(width, height,
+                horizontal ? MODE_HORIZONTAL : MODE_VERTICAL, count, index, target);
+    }
+
+    static int[] outputPartDimensions(int width, int height, int mode,
+                                      int count, int index, int target) {
+        Rect sourcePart = partRect(width, height, mode, count, index);
+        if (target == ORIGINAL) return new int[]{sourcePart.width(), sourcePart.height()};
         int maxPartLongest = 1;
         for (int i = 0; i < count; i++) {
-            int partWidth = horizontal ? width : boundary(width, count, i + 1) - boundary(width, count, i);
-            int partHeight = horizontal ? boundary(height, count, i + 1) - boundary(height, count, i) : height;
-            maxPartLongest = Math.max(maxPartLongest, Math.max(partWidth, partHeight));
+            Rect part = partRect(width, height, mode, count, i);
+            maxPartLongest = Math.max(maxPartLongest, Math.max(part.width(), part.height()));
         }
         float scale = target / (float)maxPartLongest;
         int scaledWidth = Math.max(1, Math.round(width * scale));
         int scaledHeight = Math.max(1, Math.round(height * scale));
-        int partWidth = horizontal ? scaledWidth : boundary(scaledWidth, count, index + 1) - boundary(scaledWidth, count, index);
-        int partHeight = horizontal ? boundary(scaledHeight, count, index + 1) - boundary(scaledHeight, count, index) : scaledHeight;
-        return new int[]{partWidth, partHeight};
+        Rect scaledPart = partRect(scaledWidth, scaledHeight, mode, count, index);
+        return new int[]{scaledPart.width(), scaledPart.height()};
+    }
+
+    static int[] outputJoinedDimensions(int width, int height, int mode, int count, int target) {
+        if (target == ORIGINAL) return new int[]{width, height};
+        int maxPartLongest = 1;
+        for (int i = 0; i < count; i++) {
+            Rect part = partRect(width, height, mode, count, i);
+            maxPartLongest = Math.max(maxPartLongest, Math.max(part.width(), part.height()));
+        }
+        float scale = target / (float)maxPartLongest;
+        return new int[]{Math.max(1, Math.round(width * scale)),
+                Math.max(1, Math.round(height * scale))};
     }
 
     static List<Uri> export(ContentResolver resolver, Uri source, int count, boolean horizontal,
                             int target, boolean hint, int accentColor, String folder) throws Exception {
-        return export(resolver, source, count, horizontal, target, hint, accentColor, folder,
-                null, null);
+        return export(resolver, source, count,
+                horizontal ? MODE_HORIZONTAL : MODE_VERTICAL, target, hint, accentColor, folder,
+                null, null, null);
+    }
+
+    static List<Uri> export(ContentResolver resolver, Uri source, int count, int mode,
+                            int target, boolean hint, int accentColor, String folder) throws Exception {
+        return export(resolver, source, count, mode, target, hint, accentColor, folder,
+                null, null, null);
     }
 
     interface Progress { void onPart(int current, int total); void onFallback(); }
@@ -139,10 +189,28 @@ final class SplitEngine {
     static List<Uri> export(ContentResolver resolver, Uri source, int count, boolean horizontal,
                             int target, boolean hint, int accentColor, String folder,
                             AiUpscaler upscaler, Progress progress) throws Exception {
+        return export(resolver, source, count,
+                horizontal ? MODE_HORIZONTAL : MODE_VERTICAL, target, hint, accentColor, folder,
+                upscaler, null, progress);
+    }
+
+    static List<Uri> export(ContentResolver resolver, Uri source, int count, int mode,
+                            int target, boolean hint, int accentColor, String folder,
+                            AiUpscaler upscaler, Progress progress) throws Exception {
+        return export(resolver, source, count, mode, target, hint, accentColor, folder,
+                upscaler, null, progress);
+    }
+
+    static List<Uri> export(ContentResolver resolver, Uri source, int count, int mode,
+                            int target, boolean hint, int accentColor, String folder,
+                            AiUpscaler upscaler, Bitmap backgroundMask,
+                            Progress progress) throws Exception {
         int[] size = dimensions(resolver, source);
         int[] rawSize = rawDimensions(resolver, source);
         int orientation = orientation(resolver, source);
-        if ((horizontal ? size[1] : size[0]) < count) throw new Exception("Too many parts for this image");
+        int[] shape = splitShape(size[0], size[1], mode, count);
+        if (size[0] < shape[0] || size[1] < shape[1])
+            throw new Exception("Too many parts for this image");
         List<Uri> results = new ArrayList<>();
         try (ParcelFileDescriptor fd = resolver.openFileDescriptor(source, "r")) {
             if (fd == null) throw new Exception("Image unavailable");
@@ -151,8 +219,8 @@ final class SplitEngine {
             try {
                 for (int i = 0; i < count; i++) {
                     if (progress != null) progress.onPart(i + 1, count);
-                    Rect rect = partRect(size[0], size[1], horizontal, count, i);
-                    int[] out = outputPartDimensions(size[0], size[1], horizontal, count, i, target);
+                    Rect rect = partRect(size[0], size[1], mode, count, i);
+                    int[] out = outputPartDimensions(size[0], size[1], mode, count, i, target);
                     if ((long)out[0] * out[1] > 48_000_000L)
                         throw new Exception("Output part exceeds 48 megapixels; choose a smaller size");
                     Rect rawRect = toRawRect(rect, rawSize[0], rawSize[1], orientation);
@@ -176,11 +244,17 @@ final class SplitEngine {
                             throw new AiUpscaler.Failed(failure);
                         }
                     }
+                    if (backgroundMask != null) {
+                        Bitmap masked = applyBackgroundMask(part, backgroundMask, rect,
+                                size[0], size[1]);
+                        part.recycle();
+                        part = masked;
+                    }
                     if (hint && count > 1) {
                         Bitmap mutable = part.copy(Bitmap.Config.ARGB_8888, true);
                         part.recycle();
                         part = mutable;
-                        drawJoinHints(part, horizontal, i, count, accentColor);
+                        drawJoinHints(part, shape[0], shape[1], i, accentColor);
                     }
                     ContentValues values = new ContentValues();
                     values.put(MediaStore.Images.Media.DISPLAY_NAME,
@@ -205,6 +279,25 @@ final class SplitEngine {
             throw e;
         }
         return results;
+    }
+
+    private static Bitmap applyBackgroundMask(Bitmap source, Bitmap fullMask, Rect sourceRect,
+                                               int fullWidth, int fullHeight) {
+        Bitmap result = source.copy(Bitmap.Config.ARGB_8888, true);
+        if (result == null) throw new IllegalStateException("Unable to create transparent image");
+        int maskWidth = fullMask.getWidth(), maskHeight = fullMask.getHeight();
+        Rect maskRect = new Rect(
+                Math.max(0, (int)Math.floor(sourceRect.left * maskWidth / (double)fullWidth)),
+                Math.max(0, (int)Math.floor(sourceRect.top * maskHeight / (double)fullHeight)),
+                Math.min(maskWidth, (int)Math.ceil(sourceRect.right * maskWidth / (double)fullWidth)),
+                Math.min(maskHeight, (int)Math.ceil(sourceRect.bottom * maskHeight / (double)fullHeight)));
+        Paint maskPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        maskPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+        Canvas canvas = new Canvas(result);
+        canvas.drawBitmap(fullMask, maskRect,
+                new Rect(0, 0, result.getWidth(), result.getHeight()), maskPaint);
+        maskPaint.setXfermode(null);
+        return result;
     }
 
     private static boolean swapsAxes(int orientation) {
@@ -259,23 +352,22 @@ final class SplitEngine {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
     }
 
-    private static void drawJoinHints(Bitmap part, boolean horizontal, int index, int count, int accentColor) {
+    private static void drawJoinHints(Bitmap part, int columns, int rows, int index, int accentColor) {
         Canvas canvas = new Canvas(part);
         Paint paint = new Paint(3);
         paint.setColor(accentColor);
         paint.setStrokeWidth(Math.max(2, Math.min(part.getWidth(), part.getHeight()) / 350f));
         float offset = paint.getStrokeWidth() * 4;
         float tick = offset * 2;
-        if (horizontal) {
-            if (index > 0) for (float x : new float[]{offset, part.getWidth() - offset})
-                canvas.drawLine(x, 0, x, tick, paint);
-            if (index < count - 1) for (float x : new float[]{offset, part.getWidth() - offset})
-                canvas.drawLine(x, part.getHeight(), x, part.getHeight() - tick, paint);
-        } else {
-            if (index > 0) for (float y : new float[]{offset, part.getHeight() - offset})
-                canvas.drawLine(0, y, tick, y, paint);
-            if (index < count - 1) for (float y : new float[]{offset, part.getHeight() - offset})
-                canvas.drawLine(part.getWidth(), y, part.getWidth() - tick, y, paint);
-        }
+        int row = index / columns;
+        int column = index % columns;
+        if (row > 0) for (float x : new float[]{offset, part.getWidth() - offset})
+            canvas.drawLine(x, 0, x, tick, paint);
+        if (row < rows - 1) for (float x : new float[]{offset, part.getWidth() - offset})
+            canvas.drawLine(x, part.getHeight(), x, part.getHeight() - tick, paint);
+        if (column > 0) for (float y : new float[]{offset, part.getHeight() - offset})
+            canvas.drawLine(0, y, tick, y, paint);
+        if (column < columns - 1) for (float y : new float[]{offset, part.getHeight() - offset})
+            canvas.drawLine(part.getWidth(), y, part.getWidth() - tick, y, paint);
     }
 }
