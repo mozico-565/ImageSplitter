@@ -1,0 +1,22 @@
+name: Import Lovable source
+on:
+  push:
+    branches: [main]
+    paths:
+      - ImageSplitter-Lovable-Android-source.zip
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract complete source and update main
+        run: |
+          unzip -oq ImageSplitter-Lovable-Android-source.zip -d .
+          rm ImageSplitter-Lovable-Android-source.zip
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Import complete Lovable source and Android integration"
+          git push origin HEAD:main
