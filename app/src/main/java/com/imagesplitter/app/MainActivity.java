@@ -49,7 +49,8 @@ public final class MainActivity extends Activity {
     private static final int DEFAULT_ACCENT = 0xFF3B8FF5;
     private SharedPreferences prefs;
     private int accent, background, surface, text, muted, line;
-    private boolean dark, horizontal = true, processing, aiEnhance, aiExported;
+    private boolean dark, processing, aiEnhance, aiExported, removeBackground;
+    private int splitMode = SplitEngine.MODE_HORIZONTAL;
     private volatile int processingPart;
     private String theme = "system";
     private int parts = 3, output = SplitEngine.PX_1080, custom = 1500;
@@ -59,22 +60,27 @@ public final class MainActivity extends Activity {
     private Bitmap preview;
     private List<Uri> exports = new ArrayList<>();
     private List<int[]> exportDimensions = new ArrayList<>();
-    private String language = "en";
+    private String language = "en", fontStyle = "sketch";
     private android.graphics.Typeface kalam;
+    private static final int[] GRID_COUNTS = {4, 6, 8, 9, 10, 12, 15, 16, 18, 20};
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
         language = prefs.getString("language", "en");
+        fontStyle = prefs.getString("fontStyle", "sketch");
         theme = prefs.getString("theme", prefs.getBoolean("dark", false) ? "dark" : "system");
         accent = prefs.getInt("accent", DEFAULT_ACCENT);
         if (state != null) {
             String savedSource = state.getString("source");
             if (savedSource != null) source = Uri.parse(savedSource);
-            horizontal = state.getBoolean("horizontal", true);
+            splitMode = state.containsKey("splitMode") ? state.getInt("splitMode")
+                    : state.getBoolean("horizontal", true)
+                    ? SplitEngine.MODE_HORIZONTAL : SplitEngine.MODE_VERTICAL;
             parts = state.getInt("parts", 3);
             output = state.getInt("output", SplitEngine.PX_1080);
             custom = state.getInt("custom", 1500);
+            removeBackground = state.getBoolean("removeBackground", false);
             sketchMode = state.getInt("mode", 0);
         }
         updatePalette();
@@ -100,10 +106,12 @@ public final class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);
         if (source != null) out.putString("source", source.toString());
-        out.putBoolean("horizontal", horizontal);
+        out.putInt("splitMode", splitMode);
+        out.putBoolean("horizontal", splitMode == SplitEngine.MODE_HORIZONTAL);
         out.putInt("parts", parts);
         out.putInt("output", output);
         out.putInt("custom", custom);
+        out.putBoolean("removeBackground", removeBackground);
         out.putInt("mode", sketchMode);
     }
 
@@ -117,6 +125,8 @@ public final class MainActivity extends Activity {
 
     private int dp(float n) { return Math.round(n * getResources().getDisplayMetrics().density); }
     private android.graphics.Typeface appTypeface() {
+        if (fontStyle.equals("clean"))
+            return android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL);
         if (kalam == null) {
             try { kalam = getResources().getFont(R.font.kalam_regular); }
             catch (Exception ignored) { kalam = android.graphics.Typeface.create("casual", android.graphics.Typeface.NORMAL); }
@@ -142,7 +152,28 @@ public final class MainActivity extends Activity {
         t.setTextSize(size);
         t.setGravity(Gravity.CENTER_VERTICAL);
         t.setTypeface(appTypeface(), bold ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+        t.setTextDirection(language.equals("ar") ? View.TEXT_DIRECTION_RTL : View.TEXT_DIRECTION_LTR);
         return t;
+    }
+
+    private int nearestGridCount(int value) {
+        int best = GRID_COUNTS[0];
+        for (int candidate : GRID_COUNTS)
+            if (Math.abs(candidate - value) < Math.abs(best - value)) best = candidate;
+        return best;
+    }
+
+    private int gridCountIndex(int value) {
+        int exact = nearestGridCount(value);
+        for (int i = 0; i < GRID_COUNTS.length; i++) if (GRID_COUNTS[i] == exact) return i;
+        return 0;
+    }
+
+    private String directionName(int mode) {
+        if (mode == SplitEngine.MODE_GRID) return tr("Grid", "شبكة", "Cuadrícula");
+        return mode == SplitEngine.MODE_HORIZONTAL
+                ? tr("Horizontal", "أفقي", "Horizontal")
+                : tr("Vertical", "عمودي", "Vertical");
     }
 
     private TextView button(String title, boolean selected, Runnable action) {
@@ -263,32 +294,49 @@ private void pick() {
         return tail == null || tail.isEmpty() ? tr("Selected image", "الصورة المختارة", "Imagen seleccionada") : tail;
     }
 
-    private void askCustom() { sketchInput(tr("Custom longest side", "الضلع الأطول المخصص", "Lado largo personalizado"), "64–12000 px", String.valueOf(custom), true, value -> { try { int n=Integer.parseInt(value); if(n<64||n>12000) throw new NumberFormatException(); if(sourceWidth>0&&sourceHeight>0){for(int i=0;i<parts;i++){int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,n);if((long)d[0]*d[1]>48_000_000L){sketchDialog(tr("Size is too large","المقاس كبير جدًا","El tamaño es demasiado grande"),tr("Choose a smaller value to avoid running out of memory.","اختر قيمة أصغر لتجنب نفاد الذاكرة.","Elige un valor menor para evitar agotar la memoria."),new String[]{tr("OK","حسنًا","Aceptar")},ignored->{});return;}}} custom=n; output=-1; home(); } catch(NumberFormatException e) { toast("64–12000 px"); } }); }
+    private void askCustom() { sketchInput(tr("Custom longest side", "الضلع الأطول المخصص", "Lado largo personalizado"), "64–12000 px", String.valueOf(custom), true, value -> { try { int n=Integer.parseInt(value); if(n<64||n>12000) throw new NumberFormatException(); if(sourceWidth>0&&sourceHeight>0){for(int i=0;i<parts;i++){int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,splitMode,parts,i,n);if((long)d[0]*d[1]>48_000_000L){sketchDialog(tr("Size is too large","المقاس كبير جدًا","El tamaño es demasiado grande"),tr("Choose a smaller value to avoid running out of memory.","اختر قيمة أصغر لتجنب نفاد الذاكرة.","Elige un valor menor para evitar agotar la memoria."),new String[]{tr("OK","حسنًا","Aceptar")},ignored->{});return;}}} custom=n; output=-1; home(); } catch(NumberFormatException e) { toast("64–12000 px"); } }); }
 
     private void export() {
         if (source == null) { toast(tr("Choose an image first", "اختر صورة أولًا",
                 "Selecciona una imagen primero")); return; }
         if (processing) return;
         final Uri selected = source;
-        final int count = parts, target = output == -1 ? custom : output;
+        final int count = parts, target = output == -1 ? custom : output, direction = splitMode;
         final int selectedWidth=sourceWidth, selectedHeight=sourceHeight, exportAccent=accent;
-        final boolean direction = horizontal, hints = prefs.getBoolean("hints", true), enhance = aiEnhance;
+        final boolean hints = prefs.getBoolean("hints", true), enhance = aiEnhance;
+        final boolean remove = removeBackground;
         final String folder = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         processing = true;
+        processingPart = 0;
         if (sketchScreen != null) sketchScreen.invalidate();
         new Thread(() -> {
             try {
                 final boolean[] aiFailed = {false};
+                final boolean[] backgroundFailed = {false};
                 AiUpscaler upscaler = null;
+                Bitmap backgroundMask = null;
+                if (remove) {
+                    Bitmap maskSource = null;
+                    try (BackgroundRemover remover = new BackgroundRemover(getAssets())) {
+                        maskSource = SplitEngine.loadPreview(getContentResolver(), selected, 640);
+                        backgroundMask = remover.createMask(maskSource);
+                    } catch (Exception | LinkageError | OutOfMemoryError error) {
+                        backgroundFailed[0] = true;
+                    } finally {
+                        if (maskSource != null) maskSource.recycle();
+                    }
+                }
                 if (enhance) {
                     try { upscaler = new AiUpscaler(getAssets()); }
                     catch (Exception | LinkageError error) { aiFailed[0] = true; }
                 }
                 List<Uri> result;
                 try {
+                    final Bitmap exportMask = backgroundMask;
                     try {
                         result = SplitEngine.export(getContentResolver(), selected, count,
                                 direction, target, hints, exportAccent, folder, upscaler,
+                                exportMask,
                                 new SplitEngine.Progress() {
                                 @Override public void onPart(int current, int total) {
                                     processingPart = current;
@@ -299,9 +347,13 @@ private void pick() {
                     } catch (AiUpscaler.Failed failure) {
                         aiFailed[0] = true;
                         result = SplitEngine.export(getContentResolver(), selected, count,
-                                direction, target, hints, exportAccent, folder);
+                                direction, target, hints, exportAccent, folder, null,
+                                exportMask, null);
                     }
-                } finally { if (upscaler != null) upscaler.close(); }
+                } finally {
+                    if (upscaler != null) upscaler.close();
+                    if (backgroundMask != null) backgroundMask.recycle();
+                }
                 final List<Uri> completedResult = result;
                 ArrayList<int[]> dimensions = new ArrayList<>();
                 for (int i = 0; i < count; i++) {
@@ -321,6 +373,10 @@ private void pick() {
                     if (aiFailed[0]) toast(tr("AI enhancement failed. Original split images were exported instead.",
                             "تعذر تحسين الصور بالذكاء الاصطناعي. تم تصدير الأجزاء الأصلية.",
                             "Falló la mejora con IA. Se exportaron las partes originales."));
+                    if (backgroundFailed[0]) toast(tr(
+                            "Background removal failed. Original backgrounds were kept.",
+                            "تعذرت إزالة الخلفية. تم الاحتفاظ بالخلفيات الأصلية.",
+                            "Falló la eliminación del fondo. Se conservaron los fondos originales."));
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -402,10 +458,12 @@ private void shareOne(Uri uri) { share(java.util.Collections.singletonList(uri))
             item.put("date", new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(new Date()));
             item.put("createdAt", System.currentTimeMillis());
             item.put("source", source == null ? "" : source.toString());
-            item.put("horizontal", horizontal);
+            item.put("splitMode", splitMode);
+            item.put("horizontal", splitMode == SplitEngine.MODE_HORIZONTAL);
             item.put("parts", parts);
             item.put("target", output == -1 ? custom : output);
             item.put("hints", prefs.getBoolean("hints", true));
+            item.put("removeBackground", removeBackground);
             item.put("sourceWidth", sourceWidth);
             item.put("sourceHeight", sourceHeight);
             JSONArray uris = new JSONArray();
@@ -470,10 +528,13 @@ private void shareOne(Uri uri) { share(java.util.Collections.singletonList(uri))
             toast(tr("Original image is missing","الصورة الأصلية مفقودة","Falta la imagen original")); return;
         }
         source=Uri.parse(item.optString("source"));
-        horizontal=item.optBoolean("horizontal",true);
+        splitMode=item.has("splitMode") ? item.optInt("splitMode", SplitEngine.MODE_HORIZONTAL)
+                : item.optBoolean("horizontal",true)
+                ? SplitEngine.MODE_HORIZONTAL : SplitEngine.MODE_VERTICAL;
         parts=Math.max(2,Math.min(20,item.optInt("parts",3)));
         int target=item.optInt("target",SplitEngine.PX_1080);
         if(target==0||target==750||target==1080)output=target;else{output=-1;custom=target;}
+        removeBackground=item.optBoolean("removeBackground",false);
         loadSelectedImage(source,true);
         if(source!=null)export();
     }
@@ -482,7 +543,7 @@ private void shareOne(Uri uri) { share(java.util.Collections.singletonList(uri))
 private void projectDetail(int index) { detailIndex=index; listPage=0; showSketch(3); }
 private void settings() { showSketch(1); }
 
-private void help() { sketchDialog(tr("How to print", "طريقة الطباعة", "Cómo imprimir"), tr("Pick a photo, choose the direction and number of parts, then export. Print each PNG at the same scale and join the numbered edges. Accent-colored ticks mark matching joins when enabled in Settings.", "اختر الصورة والاتجاه وعدد الأجزاء، ثم صدّرها. اطبع كل جزء بالمقياس نفسه واجمع الحواف حسب ترتيب الأرقام. علامات بلون التطبيق تساعد في المحاذاة ويمكن إيقافها من الإعدادات.", "Elige una imagen, la dirección y las partes; exporta. Imprime cada PNG a la misma escala y une los bordes numerados."), new String[]{tr("OK", "حسنًا", "Aceptar")}, index -> {}); }
+private void help() { sketchDialog(tr("How to print", "طريقة الطباعة", "Cómo imprimir"), tr("Pick a photo, choose Horizontal, Vertical, or Grid, then choose the number of parts and export. Print every PNG at the same scale and join the numbered edges.", "اختر الصورة ثم اختر التقسيم الأفقي أو العمودي أو الشبكي، وحدد عدد الأجزاء وصدّرها. اطبع كل جزء بالمقياس نفسه واجمع الحواف حسب ترتيب الأرقام.", "Elige una imagen y el corte horizontal, vertical o en cuadrícula; selecciona las partes y exporta."), new String[]{tr("OK", "حسنًا", "Aceptar")}, index -> {}); }
 
     private void toast(String value) {
         Toast toast=new Toast(this);
@@ -505,6 +566,20 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 labels,selected,index->{language=codes[index];prefs.edit().putString("language",language).apply();settings();});
     }
 
+    private void showFontPicker() {
+        String[] labels={tr("Sketch / Handwritten","يدوي / مرسوم","Manual / Dibujada"),
+                tr("Clean / Normal","عادي / واضح","Limpia / Normal")};
+        sketchDialog(tr("App Font","خط التطبيق","Fuente de la aplicación"),
+                tr("Choose the writing style used throughout the interface",
+                        "اختر نمط الخط المستخدم في واجهة التطبيق",
+                        "Elige el estilo de texto de la interfaz"),
+                labels,fontStyle.equals("clean")?1:0,index->{
+                    fontStyle=index==1?"clean":"sketch";
+                    prefs.edit().putString("fontStyle",fontStyle).apply();
+                    settings();
+                });
+    }
+
     private void resetSettings() {
         sketchConfirm(tr("Reset settings?","إعادة ضبط الإعدادات؟","¿Restablecer ajustes?"),
                 tr("Projects and exported images will not be deleted.",
@@ -512,7 +587,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                         "No se eliminarán proyectos ni imágenes."),()->{
                     String projects=prefs.getString("projects","[]");
                     prefs.edit().clear().putString("projects",projects).apply();
-                    accent=DEFAULT_ACCENT;theme="system";language="en";settings();
+                    accent=DEFAULT_ACCENT;theme="system";language="en";fontStyle="sketch";settings();
                 });
     }
 
@@ -590,7 +665,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             float w = preview.getWidth() * scale, h = preview.getHeight() * scale;
             float x = (getWidth() - w) / 2f, y = (getHeight() - h) / 2f;
             for (int i = 0; i < parts; i++) {
-                Rect src = SplitEngine.partRect(preview.getWidth(), preview.getHeight(), horizontal, parts, i);
+                Rect src = SplitEngine.partRect(preview.getWidth(), preview.getHeight(), splitMode, parts, i);
                 RectF dst = new RectF(x + src.left * scale, y + src.top * scale,
                         x + src.right * scale, y + src.bottom * scale);
                 canvas.drawBitmap(preview, src, dst, paint);
@@ -667,14 +742,15 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
 
     private int homeExtra() {
         if (preview == null || preview.getWidth() < 1) return 0;
+        int contentNeed = splitMode == SplitEngine.MODE_GRID ? 545 : parts > 5 ? parts * 88 : 545;
         return Math.max(0, Math.max(Math.round(604f * preview.getHeight() / preview.getWidth()),
-                parts > 5 ? parts * 88 : 545) - 545);
+                contentNeed) - 545);
     }
 
     private void showSketch(int mode) {
         updatePalette();
         sketchMode = mode;
-        int contentHeight = mode == 0 ? 2010 + homeExtra() : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;
+        int contentHeight = mode == 0 ? 2110 + homeExtra() : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;
         sketchScreen = new SketchScreen(contentHeight);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -726,7 +802,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
 
         @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             int width = MeasureSpec.getSize(widthMeasureSpec);
-            int height = sketchMode == 0 ? 2010 + homeExtra() : contentHeight;
+            int height = sketchMode == 0 ? 2110 + homeExtra() : contentHeight;
             setMeasuredDimension(width, Math.max(1, Math.round(width * height / 720f)));
         }
 
@@ -851,7 +927,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             c.save();
             c.translate(0, (1f-smooth)*24f);
             int layer = c.saveLayerAlpha(0, 0, 720,
-                    sketchMode == 0 ? 2010 + homeExtra() : contentHeight, (int)(255*smooth));
+                    sketchMode == 0 ? 2110 + homeExtra() : contentHeight, (int)(255*smooth));
             draw.run();
             c.restoreToCount(layer);
             c.restore();
@@ -885,6 +961,15 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 lens.quadTo(x+13,cy,x,cy+18);
                 lens.quadTo(x-13,cy,x,cy-18);
                 c.drawPath(lens,p);
+            }
+            p.setStyle(Paint.Style.FILL);
+        }
+        private void gridIcon(Canvas c, float cx, float cy, int color) {
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.6f);p.setColor(color);
+            float size=12,gap=3,startX=cx-size-gap/2f,startY=cy-size-gap/2f;
+            for(int row=0;row<2;row++) for(int column=0;column<2;column++) {
+                float l=startX+column*(size+gap),t=startY+row*(size+gap);
+                c.drawRoundRect(l,t,l+size,t+size,2.5f,2.5f,p);
             }
             p.setStyle(Paint.Style.FILL);
         }
@@ -968,15 +1053,22 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 box(c,22,522,698,837,22,paper());
                 left(c,tr("Split Direction","اتجاه التقسيم","Dirección de corte"),
                         42,567,620,27,ink());
-                selectArt(c,tr("Horizontal","أفقي","Horizontal"),
-                        40,587,356,659,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
-                layersIcon(c,94,624,39,ink());
-                selectArt(c,tr("Vertical","عمودي","Vertical"),
-                        364,587,680,659,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
-                verticalIcon(c,421,624,ink());
-                left(c,tr("Number of Parts","عدد الأجزاء","Número de partes"),
+                selectArt(c,tr("Horizontal","أفقي","Horizontal"),40,587,246,659,
+                        splitMode==SplitEngine.MODE_HORIZONTAL,()->{splitMode=SplitEngine.MODE_HORIZONTAL;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
+                layersIcon(c,70,624,31,ink());
+                selectArt(c,tr("Vertical","عمودي","Vertical"),257,587,463,659,
+                        splitMode==SplitEngine.MODE_VERTICAL,()->{splitMode=SplitEngine.MODE_VERTICAL;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
+                verticalIcon(c,286,624,ink());
+                selectArt(c,tr("Grid","شبكة","Cuadrícula"),474,587,680,659,
+                        splitMode==SplitEngine.MODE_GRID,()->{splitMode=SplitEngine.MODE_GRID;parts=nearestGridCount(parts);sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
+                gridIcon(c,502,624,ink());
+                left(c,splitMode==SplitEngine.MODE_GRID
+                                ?tr("Grid Parts","أجزاء الشبكة","Partes de cuadrícula")
+                                :tr("Number of Parts","عدد الأجزاء","Número de partes"),
                         42,713,380,24,ink());
-                float knobX=45+(parts-2)*631f/18;
+                float sliderProgress=splitMode==SplitEngine.MODE_GRID
+                        ?gridCountIndex(parts)/(float)(GRID_COUNTS.length-1):(parts-2)/18f;
+                float knobX=45+sliderProgress*631f;
                 fill(c,knobX-20,725,knobX+20,763,10,accent);
                 Path pointer=new Path();pointer.moveTo(knobX-7,763);pointer.lineTo(knobX,772);
                 pointer.lineTo(knobX+7,763);pointer.close();p.setColor(accent);c.drawPath(pointer,p);
@@ -987,7 +1079,12 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 c.drawCircle(knobX,785,14,p);
                 p.setColor(ink());p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.7f);
                 c.drawCircle(knobX,785,14,p);p.setStyle(Paint.Style.FILL);
-                left(c,"2",42,820,50,19,ink());txt(c,"20",665,820,50,19,ink());
+                left(c,splitMode==SplitEngine.MODE_GRID?"4":"2",42,820,50,19,ink());
+                txt(c,"20",665,820,50,19,ink());
+                if(splitMode==SplitEngine.MODE_GRID&&sourceWidth>0&&sourceHeight>0){
+                    int[] shape=SplitEngine.splitShape(sourceWidth,sourceHeight,splitMode,parts);
+                    txt(c,shape[0]+" × "+shape[1],360,820,160,19,muted);
+                }
                 hit(35,760,685,811,()->{});
             });
             group(c,3,()->{
@@ -1022,9 +1119,13 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 left(c,tr("AI Enhance 2×","تحسين الجودة بالذكاء الاصطناعي 2×",
                         "Mejorar calidad con IA 2×"),42,1811+extra,490,25,ink());
                 toggleArt(c,579,1784+extra,aiEnhance,()->{aiEnhance=!aiEnhance;invalidate();});
+                box(c,22,1860+extra,698,1948+extra,18,paper());
+                left(c,tr("Remove Background","إزالة الخلفية","Eliminar fondo"),42,1897+extra,430,25,ink());
+                left(c,tr("Transparent PNG","PNG شفاف","PNG transparente"),42,1925+extra,430,17,muted);
+                toggleArt(c,579,1882+extra,removeBackground,()->{removeBackground=!removeBackground;invalidate();});
                 buttonArt(c,tr("Split & Export","تقسيم وتصدير",
-                        "Cortar y exportar"),22,1880+extra,698,1982+extra,true,MainActivity.this::export);
-                layersIcon(c,172,1930+extra,44,Color.WHITE);
+                        "Cortar y exportar"),22,1978+extra,698,2080+extra,true,MainActivity.this::export);
+                layersIcon(c,172,2028+extra,44,Color.WHITE);
             });
             if(sizeTip) drawSizeTip(c);
             if(processing) processingOverlay(c);
@@ -1052,21 +1153,19 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 left(c,tr("Choose an image first","اختر صورة أولًا","Elige una imagen"),380,1230,260,22,ink());
             } else {
                 int target=sizeTipChoice==0?0:sizeTipChoice==1?750:sizeTipChoice==2?1080:custom;
-                int totalW=0,totalH=0;
                 int firstW=0,firstH=0;
                 for(int i=0;i<parts;i++){
-                    int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,target);
+                    int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,splitMode,parts,i,target);
                     if(i==0){firstW=d[0];firstH=d[1];}
-                    if(horizontal){totalW=Math.max(totalW,d[0]);totalH+=d[1];}
-                    else{totalW+=d[0];totalH=Math.max(totalH,d[1]);}
                 }
+                int[] joined=SplitEngine.outputJoinedDimensions(sourceWidth,sourceHeight,splitMode,parts,target);
                 previewTiles(c,preview,70,1155,325,1365);
                 left(c,"↔  "+firstW+" px",68,1410,155,22,ink());
                 left(c,"↕  "+firstH+" px",220,1410,120,22,ink());
                 left(c,tr("Each part:","كل جزء:","Cada parte:"),380,1178,260,22,muted);
                 left(c,firstW+" × "+firstH+" px",380,1220,270,30,ink());
                 left(c,tr("Joined size:","المقاس بعد الجمع:","Tamaño unido:"),380,1295,260,22,muted);
-                left(c,totalW+" × "+totalH+" px",380,1338,270,30,ink());
+                left(c,joined[0]+" × "+joined[1]+" px",380,1338,270,30,ink());
                 left(c,"("+parts+" "+tr("parts","أجزاء","partes")+")",380,1380,270,22,ink());
             }
             hit(42,1070,678,1455,()->{sizeTip=false;invalidate();});
@@ -1079,7 +1178,9 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(8);p.setColor(alpha(accent,80));
             c.drawCircle(360,1715,34,p);p.setColor(accent);
             c.drawArc(new RectF(326,1681,394,1749),-90,120,false,p);p.setStyle(Paint.Style.FILL);
-            txt(c,aiEnhance ? tr("AI Enhancing…","جارٍ التحسين بالذكاء الاصطناعي…",
+            txt(c,removeBackground && processingPart == 0
+                    ? tr("Removing background…","جارٍ إزالة الخلفية…","Eliminando el fondo…")
+                    : aiEnhance ? tr("AI Enhancing…","جارٍ التحسين بالذكاء الاصطناعي…",
                     "Mejorando con IA…") : tr("Splitting & saving…","جارٍ التقسيم والحفظ…",
                     "Cortando y guardando…"),360,1795,560,28,ink());
             txt(c,processingPart>0 ? tr("Enhancing ","تحسين ","Mejorando ")
@@ -1090,10 +1191,10 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         private void previewTiles(Canvas c,Bitmap bmp,float l,float t,float r,float b) {
             if(bmp==null)return;
             int n=Math.min(parts,20);
-            if (n > 5 && b-t > 500) {
+            if (splitMode != SplitEngine.MODE_GRID && n > 5 && b-t > 500) {
                 float row=(b-t)/n;
                 for(int i=0;i<n;i++) {
-                    Rect src=SplitEngine.partRect(bmp.getWidth(),bmp.getHeight(),horizontal,n,i);
+                    Rect src=SplitEngine.partRect(bmp.getWidth(),bmp.getHeight(),splitMode,n,i);
                     float scale=Math.min((r-l-24)/src.width(),(row-10)/src.height());
                     float w=src.width()*scale,h=src.height()*scale;
                     float cx=(l+r)/2,cy=t+row*(i+.5f);
@@ -1109,13 +1210,15 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             RectF full=fitRect(bmp,l,t,r,b);
             float gap=4.5f;
             for(int i=0;i<n;i++){
-                Rect src=SplitEngine.partRect(bmp.getWidth(),bmp.getHeight(),horizontal,n,i);
+                Rect src=SplitEngine.partRect(bmp.getWidth(),bmp.getHeight(),splitMode,n,i);
                 float x1=full.left+src.left*(full.width()/bmp.getWidth());
                 float y1=full.top+src.top*(full.height()/bmp.getHeight());
                 float x2=full.left+src.right*(full.width()/bmp.getWidth());
                 float y2=full.top+src.bottom*(full.height()/bmp.getHeight());
-                if(horizontal){if(i>0)y1+=gap/2;if(i<n-1)y2-=gap/2;}
-                else{if(i>0)x1+=gap/2;if(i<n-1)x2-=gap/2;}
+                int[] shape=SplitEngine.splitShape(bmp.getWidth(),bmp.getHeight(),splitMode,n);
+                int row=i/shape[0],column=i%shape[0];
+                if(column>0)x1+=gap/2;if(column<shape[0]-1)x2-=gap/2;
+                if(row>0)y1+=gap/2;if(row<shape[1]-1)y2-=gap/2;
                 if(x2<=x1||y2<=y1)continue;
                 c.save();c.clipRect(x1,y1,x2,y2);
                 c.drawBitmap(bmp,null,full,p);
@@ -1148,7 +1251,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             group(c,0,()->chrome(c,tr("Settings","الإعدادات","Ajustes"),MainActivity.this::home));
             group(c,1,()->{
                 left(c,tr("APPEARANCE","المظهر","APARIENCIA"),28,135,650,21,muted);
-                box(c,22,150,698,475,22,paper());
+                box(c,22,150,698,570,22,paper());
                 txt(c,"◉",61,213,48,34,ink());
                 left(c,tr("Accent Color","لون التطبيق","Color de acento"),96,211,350,25,ink());
                 fill(c,568,178,622,226,10,accent);outline(c,568,178,622,226,10,alpha(ink(),135));
@@ -1163,45 +1266,51 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                     selectArt(c,names[i],x,278,x+89,337,theme.equals(modes[i]),()->{
                         theme=modes[ix];prefs.edit().putString("theme",theme).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});}
                 divider(c,356);
+                txt(c,"Aa",61,415,48,27,ink());
+                left(c,tr("App Font","خط التطبيق","Fuente"),96,413,280,25,ink());
+                String fontName=fontStyle.equals("clean")
+                        ?tr("Clean","عادي","Limpia"):tr("Sketch","يدوي","Dibujada");
+                selectArt(c,fontName+"  ▾",505,376,674,439,false,MainActivity.this::showFontPicker);
+                divider(c,456);
                 boolean animations=prefs.getBoolean("animations",true);
-                txt(c,"✎",61,421,48,32,ink());
-                left(c,tr("Animations","الحركات","Animaciones"),96,419,400,25,ink());
-                toggleArt(c,588,386,animations,()->{prefs.edit().putBoolean("animations",!animations).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
+                txt(c,"✎",61,521,48,32,ink());
+                left(c,tr("Animations","الحركات","Animaciones"),96,519,400,25,ink());
+                toggleArt(c,588,486,animations,()->{prefs.edit().putBoolean("animations",!animations).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
             });
             group(c,2,()->{
-                left(c,tr("LANGUAGE","اللغة","IDIOMA"),28,523,650,21,muted);
-                box(c,22,538,698,642,22,paper());
-                txt(c,"文",61,601,48,29,ink());
+                left(c,tr("LANGUAGE","اللغة","IDIOMA"),28,623,650,21,muted);
+                box(c,22,638,698,742,22,paper());
+                txt(c,"文",61,701,48,29,ink());
                 String selected=language.equals("ar")?"العربية":language.equals("es")?"Español":"English";
-                left(c,selected,96,600,330,25,ink());
-                selectArt(c,selected+"  ▾",520,560,674,620,false,MainActivity.this::showLanguagePicker);
+                left(c,selected,96,700,330,25,ink());
+                selectArt(c,selected+"  ▾",520,660,674,720,false,MainActivity.this::showLanguagePicker);
             });
             group(c,3,()->{
-                left(c,tr("PRINTING / ASSEMBLY","الطباعة / التجميع","IMPRESIÓN / MONTAJE"),28,690,650,21,muted);
-                box(c,22,705,698,809,22,paper());
+                left(c,tr("PRINTING / ASSEMBLY","الطباعة / التجميع","IMPRESIÓN / MONTAJE"),28,790,650,21,muted);
+                box(c,22,805,698,909,22,paper());
                 boolean hints=prefs.getBoolean("hints",true);
-                txt(c,"▱",61,768,48,32,ink());
+                txt(c,"▱",61,868,48,32,ink());
                 left(c,tr("Show Joining / Pasting Guidance","إظهار تلميحات الربط واللصق",
-                        "Mostrar guías de unión"),96,767,440,24,ink());
-                toggleArt(c,588,736,hints,()->{prefs.edit().putBoolean("hints",!hints).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
+                        "Mostrar guías de unión"),96,867,440,24,ink());
+                toggleArt(c,588,836,hints,()->{prefs.edit().putBoolean("hints",!hints).apply();haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
             });
             group(c,4,()->{
-                left(c,tr("GENERAL","عام","GENERAL"),28,857,650,21,muted);
-                box(c,22,872,698,1179,22,paper());
+                left(c,tr("GENERAL","عام","GENERAL"),28,957,650,21,muted);
+                box(c,22,972,698,1279,22,paper());
                 boolean haptics=prefs.getBoolean("haptics",true);
-                txt(c,"♧",61,932,48,31,ink());
-                left(c,tr("Haptic Feedback","الاهتزاز اللمسي","Respuesta háptica"),96,931,420,25,ink());
-                toggleArt(c,588,900,haptics,()->{prefs.edit().putBoolean("haptics",!haptics).apply();if(!haptics)haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
-                divider(c,972);
-                txt(c,"↶",61,1032,48,32,ink());
-                left(c,tr("Reset Settings","إعادة ضبط الإعدادات","Restablecer ajustes"),96,1031,360,25,ink());
-                selectArt(c,tr("Reset","إعادة","Restablecer"),505,994,674,1058,false,MainActivity.this::resetSettings);
-                divider(c,1073);
-                txt(c,"?",61,1137,48,31,ink());
-                left(c,tr("About","حول التطبيق","Acerca de"),96,1135,400,25,ink());
-                txt(c,"v1.0",640,1135,75,20,muted);hit(42,1080,678,1168,MainActivity.this::showAbout);
+                txt(c,"♧",61,1032,48,31,ink());
+                left(c,tr("Haptic Feedback","الاهتزاز اللمسي","Respuesta háptica"),96,1031,420,25,ink());
+                toggleArt(c,588,1000,haptics,()->{prefs.edit().putBoolean("haptics",!haptics).apply();if(!haptics)haptic(HapticFeedbackConstants.CLOCK_TICK);settings();});
+                divider(c,1072);
+                txt(c,"↶",61,1132,48,32,ink());
+                left(c,tr("Reset Settings","إعادة ضبط الإعدادات","Restablecer ajustes"),96,1131,360,25,ink());
+                selectArt(c,tr("Reset","إعادة","Restablecer"),505,1094,674,1158,false,MainActivity.this::resetSettings);
+                divider(c,1173);
+                txt(c,"?",61,1237,48,31,ink());
+                left(c,tr("About","حول التطبيق","Acerca de"),96,1235,400,25,ink());
+                txt(c,"v1.3",640,1235,75,20,muted);hit(42,1180,678,1268,MainActivity.this::showAbout);
                 txt(c,tr("Offline-first · No analytics · Images stay on-device","يعمل دون اتصال · بلا تحليلات · صورك تبقى على الجهاز",
-                        "Sin conexión · Sin analíticas · Imágenes en el dispositivo"),360,1245,650,19,muted);
+                        "Sin conexión · Sin analíticas · Imágenes en el dispositivo"),360,1345,650,19,muted);
             });
         }
         private void projectsArt(Canvas c) {
@@ -1271,8 +1380,9 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 group(c,i+2,()->{
                     box(c,22,y,698,y+245,19,paper());
                     left(c,entry.optString("date"),48,y+54,580,27,ink());
-                    left(c,images.size()+" "+tr("parts","أجزاء","partes")+" · "+
-                                    (entry.optBoolean("horizontal",true)?tr("Horizontal","أفقي","Horizontal"):tr("Vertical","عمودي","Vertical")),
+                    int mode=entry.has("splitMode")?entry.optInt("splitMode",SplitEngine.MODE_HORIZONTAL)
+                            :entry.optBoolean("horizontal",true)?SplitEngine.MODE_HORIZONTAL:SplitEngine.MODE_VERTICAL;
+                    left(c,images.size()+" "+tr("parts","أجزاء","partes")+" · "+directionName(mode),
                             48,y+94,580,21,muted);
                     if(images.isEmpty()) left(c,tr("Missing result","النتيجة مفقودة","Resultado ausente"),48,y+130,580,21,0xFFD64545);
                     buttonArt(c,tr("Share","مشاركة","Compartir"),42,y+154,246,y+220,false,()->share(images));
@@ -1336,7 +1446,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         }
         private void drawPartThumb(Canvas c,int index,float l,float t,float r,float b) {
             if(preview==null){pictureIcon(c,(l+r)/2,(t+b)/2);return;}
-            Rect src=SplitEngine.partRect(preview.getWidth(),preview.getHeight(),horizontal,parts,index);
+            Rect src=SplitEngine.partRect(preview.getWidth(),preview.getHeight(),splitMode,parts,index);
             float scale=Math.min((r-l)/src.width(),(b-t)/src.height());
             float width=src.width()*scale,height=src.height()*scale;
             RectF dst=new RectF((l+r-width)/2f,(t+b-height)/2f,(l+r+width)/2f,(t+b+height)/2f);
@@ -1374,7 +1484,10 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             return true;
         }
         private void slide(float x){
-            int next=2+Math.round(Math.max(0,Math.min(1,(x-45)/631f))*18);
+            float progress=Math.max(0,Math.min(1,(x-45)/631f));
+            int next=splitMode==SplitEngine.MODE_GRID
+                    ?GRID_COUNTS[Math.round(progress*(GRID_COUNTS.length-1))]
+                    :2+Math.round(progress*18);
             if(next!=parts){parts=next;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();}
             invalidate();
         }
