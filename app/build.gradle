@@ -17,9 +17,39 @@ android {
     androidResources {
         noCompress += ['tflite']
     }
+    sourceSets {
+        main.assets.srcDir(layout.buildDirectory.dir('generated/assets/ai'))
+        main.res.srcDir(layout.buildDirectory.dir('generated/res'))
+    }
 }
 
 dependencies {
     implementation 'org.tensorflow:tensorflow-lite:2.16.1'
     testImplementation 'junit:junit:4.13.2'
+}
+
+def realEsrganFile = layout.buildDirectory.file('generated/assets/ai/real_esrgan_x4v3.tflite')
+tasks.register('prepareRealEsrgan') {
+    outputs.file(realEsrganFile)
+    doLast {
+        File target = realEsrganFile.get().asFile
+        if (!target.exists() || target.length() != 4_878_664L) {
+            target.parentFile.mkdirs()
+            URL modelUrl = new URI('https://github.com/john-rocky/LiteRT-Models/releases/download/v1/real_esrgan_x4v3.tflite').toURL()
+            modelUrl.withInputStream { input -> target.withOutputStream { output -> output << input } }
+        }
+        if (target.length() != 4_878_664L) {
+            throw new GradleException('Real-ESRGAN model download is incomplete')
+        }
+    }
+}
+
+tasks.register('prepareKalamFont', Copy) {
+    from(rootProject.file('kalam_regular.ttf'))
+    into(layout.buildDirectory.dir('generated/res/font'))
+}
+
+tasks.named('preBuild').configure {
+    dependsOn(tasks.named('prepareRealEsrgan'))
+    dependsOn(tasks.named('prepareKalamFont'))
 }
