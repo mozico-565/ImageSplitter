@@ -49,7 +49,8 @@ public final class MainActivity extends Activity {
     private static final int DEFAULT_ACCENT = 0xFF3B8FF5;
     private SharedPreferences prefs;
     private int accent, background, surface, text, muted, line;
-    private boolean dark, horizontal = true, processing;
+    private boolean dark, horizontal = true, processing, aiEnhance, aiExported;
+    private volatile int processingPart;
     private String theme = "system";
     private int parts = 3, output = SplitEngine.PX_1080, custom = 1500;
     private int sourceWidth, sourceHeight;
@@ -271,25 +272,54 @@ private void pick() {
         final Uri selected = source;
         final int count = parts, target = output == -1 ? custom : output;
         final int selectedWidth=sourceWidth, selectedHeight=sourceHeight, exportAccent=accent;
-        final boolean direction = horizontal, hints = prefs.getBoolean("hints", true);
+        final boolean direction = horizontal, hints = prefs.getBoolean("hints", true), enhance = aiEnhance;
         final String folder = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         processing = true;
         if (sketchScreen != null) sketchScreen.invalidate();
         new Thread(() -> {
             try {
-                List<Uri> result = SplitEngine.export(getContentResolver(), selected, count,
-                        direction, target, hints, exportAccent, folder);
+                final boolean[] aiFailed = {false};
+                AiUpscaler upscaler = null;
+                if (enhance) {
+                    try { upscaler = new AiUpscaler(getAssets()); }
+                    catch (Exception | LinkageError error) { aiFailed[0] = true; }
+                }
+                List<Uri> result;
+                try {
+                    try {
+                        result = SplitEngine.export(getContentResolver(), selected, count,
+                                direction, target, hints, exportAccent, folder, upscaler,
+                                new SplitEngine.Progress() {
+                                @Override public void onPart(int current, int total) {
+                                    processingPart = current;
+                                    runOnUiThread(() -> { if (sketchScreen != null) sketchScreen.invalidate(); });
+                                }
+                                @Override public void onFallback() { aiFailed[0] = true; }
+                                });
+                    } catch (AiUpscaler.Failed failure) {
+                        aiFailed[0] = true;
+                        result = SplitEngine.export(getContentResolver(), selected, count,
+                                direction, target, hints, exportAccent, folder);
+                    }
+                } finally { if (upscaler != null) upscaler.close(); }
                 ArrayList<int[]> dimensions = new ArrayList<>();
                 for (int i = 0; i < count; i++) {
-                    dimensions.add(SplitEngine.outputPartDimensions(selectedWidth, selectedHeight,
-                            direction, count, i, target));
+                    int[] d = SplitEngine.outputPartDimensions(selectedWidth, selectedHeight,
+                            direction, count, i, target);
+                    // The exporter records exact per-part sizes, including individual fallbacks.
+                    if (enhance && !aiFailed[0]) { d[0] *= 2; d[1] *= 2; }
+                    dimensions.add(d);
                 }
                 runOnUiThread(() -> {
                     processing = false;
+                    aiExported = enhance && !aiFailed[0];
                     exports = result;
                     exportDimensions = dimensions;
                     haptic(HapticFeedbackConstants.CONFIRM);
                     resultScreen();
+                    if (aiFailed[0]) toast(tr("AI enhancement failed. Original split images were exported instead.",
+                            "تعذر تحسين الصور بالذكاء الاصطناعي. تم تصدير الأجزاء الأصلية.",
+                            "Falló la mejora con IA. Se exportaron las partes originales."));
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -634,10 +664,16 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
     private int sizeTipChoice = 2;
     private SketchScreen sketchScreen;
 
+    private int homeExtra() {
+        if (preview == null || preview.getWidth() < 1) return 0;
+        return Math.max(0, Math.max(Math.round(604f * preview.getHeight() / preview.getWidth()),
+                parts > 5 ? parts * 88 : 545) - 545);
+    }
+
     private void showSketch(int mode) {
         updatePalette();
         sketchMode = mode;
-        int contentHeight = mode == 0 ? 1960 : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;
+        int contentHeight = mode == 0 ? 2010 + homeExtra() : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;
         sketchScreen = new SketchScreen(contentHeight);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -645,7 +681,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         scroll.setHorizontalScrollBarEnabled(false);
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         scroll.setClipToPadding(false);
-        scroll.setPadding(0, 0, 0, dp(28));
+        scroll.setPadding(0, 0, 0, dp(48));
         scroll.setBackgroundColor(background);
         scroll.setLayoutDirection(language.equals("ar") ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
         scroll.addView(sketchScreen, new ScrollView.LayoutParams(-1, -2));
@@ -689,7 +725,8 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
 
         @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             int width = MeasureSpec.getSize(widthMeasureSpec);
-            setMeasuredDimension(width, Math.max(1, Math.round(width * contentHeight / 720f)));
+            int height = sketchMode == 0 ? 2010 + homeExtra() : contentHeight;
+            setMeasuredDimension(width, Math.max(1, Math.round(width * height / 720f)));
         }
 
         @Override protected void onDraw(Canvas actual) {
@@ -812,20 +849,43 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             float smooth = 1f - (1f-progress)*(1f-progress);
             c.save();
             c.translate(0, (1f-smooth)*24f);
-            int layer = c.saveLayerAlpha(0,0,720,1400,(int)(255*smooth));
+            int layer = c.saveLayerAlpha(0, 0, 720,
+                    sketchMode == 0 ? 2010 + homeExtra() : contentHeight, (int)(255*smooth));
             draw.run();
             c.restoreToCount(layer);
             c.restore();
         }
         private void logo(Canvas c,float center,float top,float width,float height) {
             float l=center-width/2f,r=center+width/2f,unit=height/3f;
-            p.setStyle(Paint.Style.FILL);p.setColor(background);
-            c.drawRoundRect(l+5,top,r-2,top+unit-3,8,8,p);
-            c.drawRoundRect(l,top+unit-1,r,top+unit*2-4,7,7,p);
-            c.drawRoundRect(l+3,top+unit*2-2,r+3,top+height,10,10,p);
-            outline(c,l+5,top,r-2,top+unit-3,8,ink());
-            outline(c,l,top+unit-1,r,top+unit*2-4,7,ink());
-            outline(c,l+3,top+unit*2-2,r+3,top+height,10,ink());
+            float stroke = Math.max(2.2f, width * .034f);
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(stroke);
+            p.setColor(ink());p.setStrokeJoin(Paint.Join.ROUND);
+            c.drawRoundRect(l+width*.08f,top+stroke,r-width*.08f,top+unit-stroke,8,8,p);
+            c.drawRoundRect(l,top+unit+stroke,r,top+unit*2-stroke,8,8,p);
+            c.drawRoundRect(l+width*.08f,top+unit*2+stroke,r-width*.08f,top+height-stroke,8,8,p);
+            p.setStyle(Paint.Style.FILL);
+        }
+
+        private void layersIcon(Canvas c, float cx, float cy, float width, int color) {
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.9f);p.setColor(color);
+            for(int i=0;i<3;i++) {
+                float half = i==1 ? width/2f : width*.43f;
+                float top=cy-18+i*13;
+                c.drawRoundRect(cx-half,top,cx+half,top+9,3.5f,3.5f,p);
+            }
+            p.setStyle(Paint.Style.FILL);
+        }
+
+        private void verticalIcon(Canvas c, float cx, float cy, int color) {
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.8f);p.setColor(color);
+            for (int i=0;i<3;i++) {
+                float x=cx-11+i*10;
+                Path lens = new Path();lens.moveTo(x,cy-18);
+                lens.quadTo(x+13,cy,x,cy+18);
+                lens.quadTo(x-13,cy,x,cy-18);
+                c.drawPath(lens,p);
+            }
+            p.setStyle(Paint.Style.FILL);
         }
         private void folder(Canvas c,float x,float y){
             p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2.5f);p.setColor(ink());
@@ -907,10 +967,12 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 box(c,22,522,698,837,22,paper());
                 left(c,tr("Split Direction","اتجاه التقسيم","Dirección de corte"),
                         42,567,620,27,ink());
-                selectArt(c,tr("▱  Horizontal","▱  أفقي","▱  Horizontal"),
-                        40,587,356,659,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
-                selectArt(c,tr("⟪  Vertical","⟪  عمودي","⟪  Vertical"),
-                        364,587,680,659,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);invalidate();});
+                selectArt(c,tr("Horizontal","أفقي","Horizontal"),
+                        40,587,356,659,horizontal,()->{ horizontal=true;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
+                layersIcon(c,94,624,39,ink());
+                selectArt(c,tr("Vertical","عمودي","Vertical"),
+                        364,587,680,659,!horizontal,()->{horizontal=false;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();invalidate();});
+                verticalIcon(c,421,624,ink());
                 left(c,tr("Number of Parts","عدد الأجزاء","Número de partes"),
                         42,713,380,24,ink());
                 float knobX=45+(parts-2)*631f/18;
@@ -944,17 +1006,24 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 }
             });
             group(c,4,()->{
-                box(c,22,1080,698,1745,22,paper());
+                int extra=homeExtra();
+                box(c,22,1080,698,1745+extra,22,paper());
                 left(c,tr("Preview","المعاينة","Vista previa"),42,1128,610,29,ink());
                 if(preview==null) {
                     pictureIcon(c,360,1370);
                     txt(c,tr("Your split preview will appear here","ستظهر معاينة التقسيم هنا",
                             "La vista previa aparecerá aquí"),360,1460,590,25,muted);
-                } else previewTiles(c,preview,58,1160,662,1705);
+                } else previewTiles(c,preview,58,1160,662,1705+extra);
             });
             group(c,5,()->{
-                buttonArt(c,tr("▱   Split & Export","▱   تقسيم وتصدير",
-                        "▱   Cortar y exportar"),22,1780,698,1882,true,MainActivity.this::export);
+                int extra=homeExtra();
+                box(c,22,1762+extra,698,1850+extra,18,paper());
+                left(c,tr("AI Enhance 2×","تحسين الجودة بالذكاء الاصطناعي 2×",
+                        "Mejorar calidad con IA 2×"),42,1811+extra,490,25,ink());
+                toggleArt(c,579,1784+extra,aiEnhance,()->{aiEnhance=!aiEnhance;invalidate();});
+                buttonArt(c,tr("Split & Export","تقسيم وتصدير",
+                        "Cortar y exportar"),22,1880+extra,698,1982+extra,true,MainActivity.this::export);
+                layersIcon(c,172,1930+extra,44,Color.WHITE);
             });
             if(sizeTip) drawSizeTip(c);
             if(processing) processingOverlay(c);
@@ -967,18 +1036,22 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         private void drawSizeTip(Canvas c) {
             float anchor=40+sizeTipChoice*161f+75.5f;
             Path notch=new Path();notch.moveTo(anchor-16,1072);notch.lineTo(anchor,1050);
-            notch.lineTo(anchor+16,1072);notch.close();p.setColor(wash());c.drawPath(notch,p);
-            box(c,42,1070,678,1348,22,wash());
+            notch.lineTo(anchor+16,1072);notch.close();p.setColor(dark?0xFF27313B:wash());c.drawPath(notch,p);
+            box(c,42,1070,678,1455,22,dark?0xFF27313B:wash());
             String[] labels={tr("Original","الأصلي","Original"),"750 px","1080 px",
                     tr("Custom","مخصص","Personalizado")};
-            txt(c,tr("Example (","مثال (","Ejemplo (")+labels[sizeTipChoice]+")",360,1110,590,24,ink());
+            left(c,tr("Example (","مثال (","Ejemplo (")+labels[sizeTipChoice]+")",65,1122,270,27,ink());
+            line(c,350,1100,350,1419,ink(),1.5f);
             if(sourceWidth<2||sourceHeight<2) {
                 txt(c,tr("Select an image to calculate real dimensions",
                         "اختر صورة لحساب المقاسات الحقيقية",
-                        "Selecciona una imagen para calcular"),360,1210,570,24,muted);
+                        "Selecciona una imagen para calcular"),193,1240,250,18,muted);
+                pictureIcon(c,190,1300);
+                left(c,tr("Each part:","كل جزء:","Cada parte:"),380,1190,265,22,muted);
+                left(c,tr("Choose an image first","اختر صورة أولًا","Elige una imagen"),380,1230,260,22,ink());
             } else {
                 int target=sizeTipChoice==0?0:sizeTipChoice==1?750:sizeTipChoice==2?1080:custom;
-                int totalW=horizontal?0:0,totalH=horizontal?0:0;
+                int totalW=0,totalH=0;
                 int firstW=0,firstH=0;
                 for(int i=0;i<parts;i++){
                     int[] d=SplitEngine.outputPartDimensions(sourceWidth,sourceHeight,horizontal,parts,i,target);
@@ -986,28 +1059,52 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                     if(horizontal){totalW=Math.max(totalW,d[0]);totalH+=d[1];}
                     else{totalW+=d[0];totalH=Math.max(totalH,d[1]);}
                 }
-                previewTiles(c,preview,70,1130,315,1305);
-                line(c,344,1138,344,1314,ink(),1f);
-                left(c,tr("Each part:","كل جزء:","Cada parte:"),375,1178,260,21,muted);
-                left(c,firstW+" × "+firstH+" px",375,1212,260,25,ink());
-                left(c,tr("Total joined:","الإجمالي بعد الجمع:","Total unido:"),375,1255,260,21,muted);
-                left(c,totalW+" × "+totalH+" px · "+parts+" "+tr("parts","أجزاء","partes"),375,1292,275,22,ink());
+                previewTiles(c,preview,70,1155,325,1365);
+                left(c,"↔  "+firstW+" px",68,1410,155,22,ink());
+                left(c,"↕  "+firstH+" px",220,1410,120,22,ink());
+                left(c,tr("Each part:","كل جزء:","Cada parte:"),380,1178,260,22,muted);
+                left(c,firstW+" × "+firstH+" px",380,1220,270,30,ink());
+                left(c,tr("Joined size:","المقاس بعد الجمع:","Tamaño unido:"),380,1295,260,22,muted);
+                left(c,totalW+" × "+totalH+" px",380,1338,270,30,ink());
+                left(c,"("+parts+" "+tr("parts","أجزاء","partes")+")",380,1380,270,22,ink());
             }
-            hit(42,1070,678,1348,()->{sizeTip=false;invalidate();});
+            hit(42,1070,678,1455,()->{sizeTip=false;invalidate();});
         }
         private void processingOverlay(Canvas c) {
+            int extra=homeExtra();
+            c.save();c.translate(0,extra+100);
             fill(c,42,1640,678,1888,24,alpha(background,238));
             outline(c,42,1640,678,1888,24,accent);
             p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(8);p.setColor(alpha(accent,80));
             c.drawCircle(360,1715,34,p);p.setColor(accent);
             c.drawArc(new RectF(326,1681,394,1749),-90,120,false,p);p.setStyle(Paint.Style.FILL);
-            txt(c,tr("Splitting & saving…","جارٍ التقسيم والحفظ…","Cortando y guardando…"),360,1795,560,28,ink());
-            txt(c,tr("Large images may take a moment","قد تستغرق الصور الكبيرة لحظات",
-                    "Las imágenes grandes pueden tardar"),360,1840,560,20,muted);
+            txt(c,aiEnhance ? tr("AI Enhancing…","جارٍ التحسين بالذكاء الاصطناعي…",
+                    "Mejorando con IA…") : tr("Splitting & saving…","جارٍ التقسيم والحفظ…",
+                    "Cortando y guardando…"),360,1795,560,28,ink());
+            txt(c,processingPart>0 ? tr("Enhancing ","تحسين ","Mejorando ")
+                    +processingPart+"/"+parts : tr("Preparing…","جارٍ التجهيز…","Preparando…"),
+                    360,1840,560,20,muted);
+            c.restore();
         }
         private void previewTiles(Canvas c,Bitmap bmp,float l,float t,float r,float b) {
             if(bmp==null)return;
             int n=Math.min(parts,20);
+            if (n > 5 && b-t > 500) {
+                float row=(b-t)/n;
+                for(int i=0;i<n;i++) {
+                    Rect src=SplitEngine.partRect(bmp.getWidth(),bmp.getHeight(),horizontal,n,i);
+                    float scale=Math.min((r-l-24)/src.width(),(row-10)/src.height());
+                    float w=src.width()*scale,h=src.height()*scale;
+                    float cx=(l+r)/2,cy=t+row*(i+.5f);
+                    RectF dst=new RectF(cx-w/2,cy-h/2,cx+w/2,cy+h/2);
+                    fill(c,l+4,cy-row/2+2,r-4,cy+row/2-2,9,wash());
+                    c.drawBitmap(bmp,src,dst,p);
+                    outline(c,dst.left,dst.top,dst.right,dst.bottom,7,ink());
+                    fill(c,l+7,cy-15,l+37,cy+15,15,accent);
+                    txt(c,String.valueOf(i+1),l+22,cy+6,28,18,Color.WHITE);
+                }
+                return;
+            }
             RectF full=fitRect(bmp,l,t,r,b);
             float gap=4.5f;
             for(int i=0;i<n;i++){
@@ -1277,7 +1374,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
         }
         private void slide(float x){
             int next=2+Math.round(Math.max(0,Math.min(1,(x-45)/631f))*18);
-            if(next!=parts){parts=next;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);}
+            if(next!=parts){parts=next;sizeTip=false;haptic(HapticFeedbackConstants.CLOCK_TICK);requestLayout();}
             invalidate();
         }
         private final class Zone {
