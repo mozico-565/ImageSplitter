@@ -302,6 +302,7 @@ private void pick() {
                                 direction, target, hints, exportAccent, folder);
                     }
                 } finally { if (upscaler != null) upscaler.close(); }
+                final List<Uri> completedResult = result;
                 ArrayList<int[]> dimensions = new ArrayList<>();
                 for (int i = 0; i < count; i++) {
                     int[] d = SplitEngine.outputPartDimensions(selectedWidth, selectedHeight,
@@ -313,7 +314,7 @@ private void pick() {
                 runOnUiThread(() -> {
                     processing = false;
                     aiExported = enhance && !aiFailed[0];
-                    exports = result;
+                    exports = completedResult;
                     exportDimensions = dimensions;
                     haptic(HapticFeedbackConstants.CONFIRM);
                     resultScreen();
