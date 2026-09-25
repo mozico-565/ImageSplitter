@@ -19,7 +19,8 @@ android {
     }
     sourceSets {
         main.assets.srcDir(layout.buildDirectory.dir('generated/assets/ai'))
-        main.res.srcDir(layout.buildDirectory.dir('generated/res'))
+        // Keep custom resources outside AGP's own build/generated/res tree.
+        main.res.srcDir(layout.buildDirectory.dir('custom-res/main'))
     }
 }
 
@@ -46,7 +47,7 @@ tasks.register('prepareRealEsrgan') {
 
 tasks.register('prepareKalamFont', Copy) {
     from(rootProject.file('kalam_regular.ttf'))
-    into(layout.buildDirectory.dir('generated/res/font'))
+    into(layout.buildDirectory.dir('custom-res/main/font'))
 }
 
 tasks.named('preBuild').configure {
