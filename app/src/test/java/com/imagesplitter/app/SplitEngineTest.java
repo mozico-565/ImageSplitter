@@ -46,4 +46,13 @@ public class SplitEngineTest {
     public void rejectsInvalidBoundary() {
         SplitEngine.boundary(100, 0, 0);
     }
+
+    @Test public void gridUsesRowsAndColumnsAndCoversTheImage() {
+        assertArrayEquals(new int[]{2, 2},
+                SplitEngine.splitShape(1200, 1200, SplitEngine.MODE_GRID, 4));
+        assertArrayEquals(new int[]{3, 2},
+                SplitEngine.splitShape(1800, 1200, SplitEngine.MODE_GRID, 6));
+        assertArrayEquals(new int[]{2, 3},
+                SplitEngine.splitShape(1200, 1800, SplitEngine.MODE_GRID, 6));
+    }
 }
