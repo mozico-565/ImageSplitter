@@ -14,18 +14,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    androidResources {
+        noCompress += ['tflite']
+    }
 }
 
 dependencies {
+    implementation 'org.tensorflow:tensorflow-lite:2.16.1'
     testImplementation 'junit:junit:4.13.2'
-}
-
-// The web upload flow keeps the binary font at the repository root.
-// Prepare the Android font resource before resource compilation.
-tasks.register('prepareKalamFont', Copy) {
-    from(rootProject.file('kalam_regular.ttf'))
-    into(file('src/main/res/font'))
-}
-tasks.named('preBuild').configure {
-    dependsOn(tasks.named('prepareKalamFont'))
 }
