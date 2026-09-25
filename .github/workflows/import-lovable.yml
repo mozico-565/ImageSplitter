@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract Lovable source
+            - name: Extract Lovable source
         shell: bash
         run: |
           set -e
@@ -33,14 +33,16 @@ jobs:
           shopt -s dotglob nullglob
           FILES=("$TEMP"/*)
 
-          # إذا كان الـ ZIP يحتوي مجلدًا رئيسيًا واحدًا
           if [ "${#FILES[@]}" -eq 1 ] && [ -d "${FILES[0]}" ]; then
             SOURCE="${FILES[0]}"
           else
             SOURCE="$TEMP"
           fi
 
-          # لا نحذف .git أو GitHub Actions
+          # مهم: لا نستورد Workflows الموجودة داخل ZIP
+          rm -rf "$SOURCE/.github"
+
+          # نحافظ على .git و .github الحاليين
           find . -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
             ! -name ".github" \
@@ -50,7 +52,6 @@ jobs:
           cp -a "$SOURCE"/. ./
 
           rm -f "$ZIP"
-
       - name: Commit imported project
         shell: bash
         run: |
