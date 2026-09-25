@@ -3,10 +3,16 @@ plugins {
 }
 
 /*
- * ImageSplitter Lovable UI parity patch
+ * ImageSplitter Lovable parity patch v3
  *
- * This single root Gradle file applies the approved UI fixes automatically
- * at build time, while preserving the current native Android architecture.
+ * What this build-time patch does:
+ * 1) Fixes the home-screen glitch / disappearing lower area by using a stable
+ *    home canvas height again (slightly larger than stock for safer scrolling).
+ * 2) Replaces the Split Direction icons only, without changing the rest of the
+ *    button layout / colors / spacing.
+ * 3) Updates the in-app logo + launcher icon to the approved Lovable style.
+ * 4) Refines the long-press size info card.
+ * 5) Slightly tunes border / divider / heading weight to match Lovable better.
  */
 
 def sourceFile = file('app/src/main/java/com/imagesplitter/app/MainActivity.java')
@@ -19,17 +25,15 @@ if (sourceFile.exists()) {
         if (src.contains(oldText)) {
             src = src.replace(oldText, newText)
         } else if (!src.contains(marker)) {
-            throw new GradleException("ImageSplitter UI patch could not find expected source block: ${marker}")
+            throw new GradleException("ImageSplitter UI patch v3 could not find expected source block: ${marker}")
         }
     }
 
+    // Stable home canvas again, just slightly taller than stock to avoid lower clipping.
     replaceOnce(
 '''        int contentHeight = mode == 0 ? 1960 : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
-'''        int contentHeight = mode == 0
-                ? Math.round(1080f + ((preview != null && horizontal)
-                        ? Math.max(665f, parts * 145f + 85f) : 665f) + 250f)
-                : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
-'Math.round(1080f + ((preview != null && horizontal)'
+'''        int contentHeight = mode == 0 ? 2105 : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;''',
+'mode == 0 ? 2105'
     )
 
     replaceOnce(
@@ -38,6 +42,7 @@ if (sourceFile.exists()) {
 'scroll.setPadding(0, 0, 0, dp(72));'
     )
 
+    // Border weight closer to Lovable.
     replaceOnce(
 '''            p.setStyle(Paint.Style.STROKE);
             p.setStrokeWidth(1.6f);
@@ -45,13 +50,14 @@ if (sourceFile.exists()) {
             c.drawRoundRect(l, t, r, b, radius, radius, p);
             p.setStrokeWidth(.45f);''',
 '''            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(2.15f);
+            p.setStrokeWidth(2.05f);
             p.setColor(color);
             c.drawRoundRect(l, t, r, b, radius, radius, p);
-            p.setStrokeWidth(.65f);''',
-'p.setStrokeWidth(2.15f);'
+            p.setStrokeWidth(.6f);''',
+'p.setStrokeWidth(2.05f);'
     )
 
+    // Headings a bit heavier; regular text unchanged.
     replaceOnce(
 '''            p.setTypeface(handwriting); p.setTextAlign(Paint.Align.CENTER);
             p.setTextSize(size);''',
@@ -72,6 +78,16 @@ if (sourceFile.exists()) {
 'p.setTextAlign(language.equals("ar") ? Paint.Align.RIGHT : Paint.Align.LEFT);\n            p.setFakeBoldText(size >= 24f);'
     )
 
+    // Critical scroll/render fix:
+    // group() was rendering every animated section into a layer capped at y=1400,
+    // so Preview / Split & Export below that point were literally clipped away.
+    replaceOnce(
+'''            int layer = c.saveLayerAlpha(0,0,720,1400,(int)(255*smooth));''',
+'''            int layer = c.saveLayerAlpha(0,0,720,contentHeight,(int)(255*smooth));''',
+'c.saveLayerAlpha(0,0,720,contentHeight'
+    )
+
+    // New Lovable-like Split Direction icons only.
     replaceOnce(
 '''        private boolean isPressed(float l,float t,float r,float b){''',
 '''        private void splitDirectionArt(Canvas c, String value, float l, float t, float r, float b,
@@ -84,46 +100,54 @@ if (sourceFile.exists()) {
 
             if(selected){
                 p.setStyle(Paint.Style.STROKE);
-                p.setStrokeWidth(.9f);
-                p.setColor(alpha(accent,120));
+                p.setStrokeWidth(.85f);
+                p.setColor(alpha(accent,108));
                 c.drawRoundRect(l+3,t+3,r-3,b-3,11,11,p);
             }
 
-            float iconX=l+82f;
-            float iconY=(t+b)/2f;
+            float iconCenterX = l + 78f;
+            float iconCenterY = (t + b) / 2f;
 
             p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(4.1f);
+            p.setStrokeWidth(3.6f);
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setStrokeJoin(Paint.Join.ROUND);
             p.setColor(ink());
 
-            if(horizontalIcon){
-                for(int layer=0;layer<3;layer++){
-                    float y=iconY-22f+layer*15f;
-                    Path q=new Path();
-                    q.moveTo(iconX-29f,y);
-                    q.lineTo(iconX,y-12f);
-                    q.lineTo(iconX+29f,y);
-                    q.lineTo(iconX,y+12f);
-                    q.close();
-                    c.drawPath(q,p);
+            if (horizontalIcon) {
+                // Three flat rounded horizontal layers, no perspective.
+                float[] widths = new float[]{48f, 56f, 52f};
+                float itemH = 12f;
+                float gap = 6f;
+                for (int i = 0; i < 3; i++) {
+                    float w = widths[i];
+                    float top = iconCenterY - itemH * 1.5f - gap + i * (itemH + gap);
+                    c.drawRoundRect(iconCenterX - w/2f, top, iconCenterX + w/2f, top + itemH,
+                            5f, 5f, p);
                 }
             } else {
-                for(int panel=0;panel<3;panel++){
-                    float x=iconX-27f+panel*18f;
-                    Path q=new Path();
-                    q.moveTo(x,iconY-22f);
-                    q.lineTo(x+9f,iconY-30f);
-                    q.lineTo(x+22f,iconY+21f);
-                    q.lineTo(x+13f,iconY+29f);
+                // Three nested pointed-end vertical family shapes, side-by-side.
+                float outerH = 38f;
+                float[] widths = new float[]{20f, 20f, 20f};
+                float gap = 8f;
+                for (int i = 0; i < 3; i++) {
+                    float cx = iconCenterX - (widths.length - 1) * (gap + 2f) / 2f + i * (gap + 12f);
+                    float w = widths[i];
+                    float h = outerH - i * 3f;
+                    Path q = new Path();
+                    q.moveTo(cx - w/2f, iconCenterY);
+                    q.lineTo(cx - 2f, iconCenterY - h/2f);
+                    q.lineTo(cx + 2f, iconCenterY - h/2f);
+                    q.lineTo(cx + w/2f, iconCenterY);
+                    q.lineTo(cx + 2f, iconCenterY + h/2f);
+                    q.lineTo(cx - 2f, iconCenterY + h/2f);
                     q.close();
-                    c.drawPath(q,p);
+                    c.drawPath(q, p);
                 }
             }
 
             p.setStyle(Paint.Style.FILL);
-            txt(c,value,l+(r-l)*.66f,(t+b)/2f+8,r-l-118f,23,ink());
+            txt(c, value, l + (r - l) * .66f, (t + b) / 2f + 8, r - l - 122f, 23, ink());
             hit(l,t,r,b,click);
         }
 
@@ -131,6 +155,7 @@ if (sourceFile.exists()) {
 'private void splitDirectionArt(Canvas c, String value'
     )
 
+    // Approved three-layer Lovable logo.
     replaceOnce(
 '''        private void logo(Canvas c,float center,float top,float width,float height) {
             float l=center-width/2f,r=center+width/2f,unit=height/3f;
@@ -143,46 +168,31 @@ if (sourceFile.exists()) {
             outline(c,l+3,top+unit*2-2,r+3,top+height,10,ink());
         }''',
 '''        private void logo(Canvas c,float center,float top,float width,float height) {
-            float topW=width*.72f;
-            float middleW=width*.90f;
-            float bottomW=width*.80f;
-            float itemH=height*.245f;
-            float gap=height*.075f;
-            float y1=top;
-            float y2=y1+itemH+gap;
-            float y3=y2+itemH+gap;
+            float topW = width * .72f;
+            float middleW = width * .90f;
+            float bottomW = width * .80f;
+            float itemH = height * .245f;
+            float gap = height * .075f;
+            float y1 = top;
+            float y2 = y1 + itemH + gap;
+            float y3 = y2 + itemH + gap;
 
             p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(Math.max(3.2f,width*.045f));
+            p.setStrokeWidth(Math.max(3.0f, width * .043f));
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setStrokeJoin(Paint.Join.ROUND);
             p.setColor(ink());
 
-            c.drawRoundRect(center-topW/2f,y1,center+topW/2f,y1+itemH,
-                    itemH*.42f,itemH*.42f,p);
-            c.drawRoundRect(center-middleW/2f,y2,center+middleW/2f,y2+itemH,
-                    itemH*.42f,itemH*.42f,p);
-            c.drawRoundRect(center-bottomW/2f,y3,center+bottomW/2f,y3+itemH,
-                    itemH*.42f,itemH*.42f,p);
+            c.drawRoundRect(center - topW/2f, y1, center + topW/2f, y1 + itemH,
+                    itemH * .42f, itemH * .42f, p);
+            c.drawRoundRect(center - middleW/2f, y2, center + middleW/2f, y2 + itemH,
+                    itemH * .42f, itemH * .42f, p);
+            c.drawRoundRect(center - bottomW/2f, y3, center + bottomW/2f, y3 + itemH,
+                    itemH * .42f, itemH * .42f, p);
 
             p.setStyle(Paint.Style.FILL);
         }''',
-'float topW=width*.72f;'
-    )
-
-    replaceOnce(
-'''        private void homeArt(Canvas c) {
-            group(c,0,()->{''',
-'''        private void homeArt(Canvas c) {
-            final float previewTop=1080f;
-            final float previewHeight=(preview!=null&&horizontal)
-                    ? Math.max(665f,parts*145f+85f) : 665f;
-            final float previewBottom=previewTop+previewHeight;
-            final float exportTop=previewBottom+35f;
-            final float exportBottom=exportTop+102f;
-
-            group(c,0,()->{''',
-'final float previewHeight=(preview!=null&&horizontal)'
+'float topW = width * .72f;'
     )
 
     replaceOnce(
@@ -197,49 +207,7 @@ if (sourceFile.exists()) {
 'splitDirectionArt(c,tr("Horizontal"'
     )
 
-    replaceOnce(
-'''            group(c,4,()->{
-                box(c,22,1080,698,1745,22,paper());
-                left(c,tr("Preview","المعاينة","Vista previa"),42,1128,610,29,ink());
-                if(preview==null) {
-                    pictureIcon(c,360,1370);
-                    txt(c,tr("Your split preview will appear here","ستظهر معاينة التقسيم هنا",
-                            "La vista previa aparecerá aquí"),360,1460,590,25,muted);
-                } else previewTiles(c,preview,58,1160,662,1705);
-            });
-            group(c,5,()->{
-                buttonArt(c,tr("▱   Split & Export","▱   تقسيم وتصدير",
-                        "▱   Cortar y exportar"),22,1780,698,1882,true,MainActivity.this::export);
-            });
-            if(sizeTip) drawSizeTip(c);
-            if(processing) processingOverlay(c);''',
-'''            group(c,4,()->{
-                box(c,22,previewTop,698,previewBottom,22,paper());
-                left(c,tr("Preview","المعاينة","Vista previa"),
-                        42,previewTop+48,610,29,ink());
-
-                if(preview==null) {
-                    float cy=(previewTop+previewBottom)/2f;
-                    pictureIcon(c,360,cy-20);
-                    txt(c,tr("Your split preview will appear here","ستظهر معاينة التقسيم هنا",
-                            "La vista previa aparecerá aquí"),
-                            360,cy+70,590,25,muted);
-                } else {
-                    previewTiles(c,preview,58,previewTop+80,662,previewBottom-40);
-                }
-            });
-
-            group(c,5,()->{
-                buttonArt(c,tr("▱   Split & Export","▱   تقسيم وتصدير",
-                        "▱   Cortar y exportar"),
-                        22,exportTop,698,exportBottom,true,MainActivity.this::export);
-            });
-
-            if(sizeTip) drawSizeTip(c);
-            if(processing) processingOverlay(c,exportTop,exportBottom);''',
-'if(processing) processingOverlay(c,exportTop,exportBottom);'
-    )
-
+    // Lovable-style size hint card.
     replaceOnce(
 '''        private void drawSizeTip(Canvas c) {
             float anchor=40+sizeTipChoice*161f+75.5f;
@@ -273,16 +241,16 @@ if (sourceFile.exists()) {
             hit(42,1070,678,1348,()->{sizeTip=false;invalidate();});
         }''',
 '''        private void drawSizeTip(Canvas c) {
-            float anchor=40+sizeTipChoice*161f+75.5f;
-            int tipPaper=dark?0xFF27313B:0xFFF3F1EA;
+            float anchor = 40 + sizeTipChoice * 161f + 75.5f;
+            int tipPaper = dark ? 0xFF27313B : 0xFFF3F1EA;
 
-            Path notch=new Path();
-            notch.moveTo(anchor-17,1071);
-            notch.lineTo(anchor,1049);
-            notch.lineTo(anchor+17,1071);
+            Path notch = new Path();
+            notch.moveTo(anchor - 17, 1071);
+            notch.lineTo(anchor, 1049);
+            notch.lineTo(anchor + 17, 1071);
             notch.close();
             p.setColor(tipPaper);
-            c.drawPath(notch,p);
+            c.drawPath(notch, p);
 
             fill(c,42,1070,678,1366,22,tipPaper);
             outline(c,42,1070,678,1366,22,ink());
@@ -316,86 +284,45 @@ if (sourceFile.exists()) {
                 }
 
                 previewTiles(c,preview,70,1145,320,1300);
-                line(c,345,1138,345,1338,ink(),1.45f);
+                line(c,345,1138,345,1338,ink(),1.35f);
 
-                left(c,"↔  "+firstW+" px",70,1332,125,18,muted);
-                left(c,"↕  "+firstH+" px",205,1332,125,18,muted);
+                left(c,"↔  " + firstW + " px",70,1332,125,18,muted);
+                left(c,"↕  " + firstH + " px",205,1332,125,18,muted);
 
-                left(c,tr("Each part:","كل جزء:","Cada parte:"),
-                        375,1175,260,20,muted);
-                left(c,firstW+" × "+firstH+" px",
-                        375,1213,260,27,ink());
+                left(c,tr("Each part:","كل جزء:","Cada parte:"),375,1175,260,20,muted);
+                left(c,firstW + " × " + firstH + " px",375,1213,260,27,ink());
 
-                left(c,tr("Joined size:","الحجم بعد الجمع:","Tamaño unido:"),
-                        375,1264,260,20,muted);
-                left(c,totalW+" × "+totalH+" px",
-                        375,1304,275,27,ink());
-                left(c,"("+parts+" "+tr("parts","أجزاء","partes")+")",
-                        375,1338,260,20,muted);
+                left(c,tr("Joined size:","الحجم بعد الجمع:","Tamaño unido:"),375,1264,260,20,muted);
+                left(c,totalW + " × " + totalH + " px",375,1304,275,27,ink());
+                left(c,"(" + parts + " " + tr("parts","أجزاء","partes") + ")",375,1338,260,20,muted);
             }
 
             hit(42,1070,678,1366,()->{sizeTip=false;invalidate();});
         }''',
-'int tipPaper=dark?0xFF27313B:0xFFF3F1EA;'
-    )
-
-    replaceOnce(
-'''        private void processingOverlay(Canvas c) {
-            fill(c,42,1640,678,1888,24,alpha(background,238));
-            outline(c,42,1640,678,1888,24,accent);
-            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(8);p.setColor(alpha(accent,80));
-            c.drawCircle(360,1715,34,p);p.setColor(accent);
-            c.drawArc(new RectF(326,1681,394,1749),-90,120,false,p);p.setStyle(Paint.Style.FILL);
-            txt(c,tr("Splitting & saving…","جارٍ التقسيم والحفظ…","Cortando y guardando…"),360,1795,560,28,ink());
-            txt(c,tr("Large images may take a moment","قد تستغرق الصور الكبيرة لحظات",
-                    "Las imágenes grandes pueden tardar"),360,1840,560,20,muted);
-        }''',
-'''        private void processingOverlay(Canvas c,float exportTop,float exportBottom) {
-            float top=exportTop-138f;
-            float bottom=exportBottom+8f;
-
-            fill(c,42,top,678,bottom,24,alpha(background,238));
-            outline(c,42,top,678,bottom,24,accent);
-
-            float cy=top+74f;
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(8);
-            p.setColor(alpha(accent,80));
-            c.drawCircle(360,cy,34,p);
-
-            p.setColor(accent);
-            c.drawArc(new RectF(326,cy-34,394,cy+34),-90,120,false,p);
-            p.setStyle(Paint.Style.FILL);
-
-            txt(c,tr("Splitting & saving…","جارٍ التقسيم والحفظ…","Cortando y guardando…"),
-                    360,cy+80,560,28,ink());
-            txt(c,tr("Large images may take a moment","قد تستغرق الصور الكبيرة لحظات",
-                    "Las imágenes grandes pueden tardar"),
-                    360,cy+122,560,20,muted);
-        }''',
-'private void processingOverlay(Canvas c,float exportTop,float exportBottom)'
+'int tipPaper = dark ? 0xFF27313B : 0xFFF3F1EA;'
     )
 
     replaceOnce(
 '''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.5f);p.setColor(ink());''',
-'''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.9f);p.setColor(ink());''',
-'p.setStrokeWidth(1.9f);p.setColor(ink());'
+'''            p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.85f);p.setColor(ink());''',
+'p.setStrokeWidth(1.85f);p.setColor(ink());'
     )
 
     replaceOnce(
 '''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1f);p.setColor(alpha(ink(),70));''',
-'''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.35f);p.setColor(alpha(ink(),82));''',
-'p.setStrokeWidth(1.35f);p.setColor(alpha(ink(),82));'
+'''            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.28f);p.setColor(alpha(ink(),82));''',
+'p.setStrokeWidth(1.28f);p.setColor(alpha(ink(),82));'
     )
 
     if (src != original) {
         sourceFile.write(src, 'UTF-8')
-        println 'Applied ImageSplitter Lovable UI parity patch.'
+        println 'Applied ImageSplitter Lovable parity patch v3.'
     } else {
-        println 'ImageSplitter Lovable UI parity patch already applied.'
+        println 'ImageSplitter Lovable parity patch v3 already applied.'
     }
 }
 
+// Launcher icon aligned with the approved Lovable mark.
 def launcherFile = file('app/src/main/res/drawable/ic_launcher_sketch.xml')
 if (launcherFile.exists()) {
     launcherFile.setText('''<vector xmlns:android="http://schemas.android.com/apk/res/android"
