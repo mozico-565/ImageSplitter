@@ -46,6 +46,7 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final int PICK_IMAGE = 41;
+    private static final int STYLE_TRANSFER = 42;
     private static final int DEFAULT_ACCENT = 0xFF3B8FF5;
     private SharedPreferences prefs;
     private int accent, background, surface, text, muted, line;
@@ -239,6 +240,12 @@ public final class MainActivity extends Activity {
     }
     private void home() { showSketch(0); }
 
+private void openStyleTransfer() {
+        Intent intent = new Intent(this, StyleTransferActivity.class);
+        if (source != null) intent.setData(source);
+        startActivityForResult(intent, STYLE_TRANSFER);
+    }
+
 private void pick() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("image/*");
@@ -248,6 +255,10 @@ private void pick() {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == STYLE_TRANSFER && result == RESULT_OK && data != null && data.getData() != null) {
+            loadSelectedImage(data.getData(), true);
+            return;
+        }
         if (request != PICK_IMAGE || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri selected = data.getData();
         try {
@@ -593,9 +604,9 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
 
     private void showAbout() {
         sketchDialog(tr("About Image Splitter","حول Image Splitter","Acerca de Image Splitter"),
-                tr("A private, offline-first native Android tool for turning one image into accurate printable parts. No analytics and no image uploads.",
-                        "أداة أندرويد أصلية وخاصة تعمل دون اتصال لتحويل صورة واحدة إلى أجزاء دقيقة للطباعة. بلا تحليلات أو رفع للصور.",
-                        "Herramienta Android nativa y privada para dividir imágenes en partes imprimibles. Sin analíticas ni subidas."),
+                tr("A native Android tool for accurate printable parts. Splitting, enhancement and background removal work offline. AI Style Transfer uploads selected images to our server and Cloudflare only when you generate. No analytics.",
+                        "أداة أندرويد لتقسيم الصور للطباعة. التقسيم والتحسين وإزالة الخلفية تعمل دون اتصال. تحويل الأسلوب يرسل الصور المختارة إلى خادمنا وCloudflare عند التوليد فقط. بلا تحليلات.",
+                        "Herramienta Android para dividir imágenes. El corte, mejora y eliminación de fondo funcionan sin conexión. La transferencia de estilo sube las imágenes al servidor y Cloudflare al generar. Sin analíticas."),
                 new String[]{tr("Close","إغلاق","Cerrar")},ignored->{});
     }
 
@@ -750,7 +761,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
     private void showSketch(int mode) {
         updatePalette();
         sketchMode = mode;
-        int contentHeight = mode == 0 ? 2110 + homeExtra() : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;
+        int contentHeight = mode == 0 ? 2240 + homeExtra() : mode == 1 ? 1450 : mode == 3 ? 1570 : 1450;
         sketchScreen = new SketchScreen(contentHeight);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -802,7 +813,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
 
         @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             int width = MeasureSpec.getSize(widthMeasureSpec);
-            int height = sketchMode == 0 ? 2110 + homeExtra() : contentHeight;
+            int height = sketchMode == 0 ? 2240 + homeExtra() : contentHeight;
             setMeasuredDimension(width, Math.max(1, Math.round(width * height / 720f)));
         }
 
@@ -927,7 +938,7 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
             c.save();
             c.translate(0, (1f-smooth)*24f);
             int layer = c.saveLayerAlpha(0, 0, 720,
-                    sketchMode == 0 ? 2110 + homeExtra() : contentHeight, (int)(255*smooth));
+                    sketchMode == 0 ? 2240 + homeExtra() : contentHeight, (int)(255*smooth));
             draw.run();
             c.restoreToCount(layer);
             c.restore();
@@ -1126,6 +1137,8 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
                 buttonArt(c,tr("Split & Export","تقسيم وتصدير",
                         "Cortar y exportar"),22,1978+extra,698,2080+extra,true,MainActivity.this::export);
                 layersIcon(c,172,2028+extra,44,Color.WHITE);
+                buttonArt(c,tr("AI Style Transfer", "تحويل أسلوب الصورة بالذكاء الاصطناعي",
+                        "Transferencia de estilo con IA"),22,2100+extra,698,2210+extra,false,MainActivity.this::openStyleTransfer);
             });
             if(sizeTip) drawSizeTip(c);
             if(processing) processingOverlay(c);
@@ -1614,3 +1627,4 @@ private void help() { sketchDialog(tr("How to print", "طريقة الطباعة
     }
 
 }
+

@@ -107,13 +107,18 @@ final class SplitEngine {
     }
 
     static Rect partRect(int width, int height, int mode, int count, int index) {
+        int[] edges = partEdges(width, height, mode, count, index);
+        return new Rect(edges[0], edges[1], edges[2], edges[3]);
+    }
+
+    static int[] partEdges(int width, int height, int mode, int count, int index) {
         if (index < 0 || index >= count) throw new IllegalArgumentException("Invalid part index");
         int[] shape = splitShape(width, height, mode, count);
         int columns = shape[0];
         int row = index / columns;
         int column = index % columns;
-        return new Rect(boundary(width, columns, column), boundary(height, shape[1], row),
-                boundary(width, columns, column + 1), boundary(height, shape[1], row + 1));
+        return new int[]{boundary(width, columns, column), boundary(height, shape[1], row),
+                boundary(width, columns, column + 1), boundary(height, shape[1], row + 1)};
     }
 
     static int boundary(int length, int count, int boundaryIndex) {
@@ -145,26 +150,26 @@ final class SplitEngine {
 
     static int[] outputPartDimensions(int width, int height, int mode,
                                       int count, int index, int target) {
-        Rect sourcePart = partRect(width, height, mode, count, index);
-        if (target == ORIGINAL) return new int[]{sourcePart.width(), sourcePart.height()};
+        int[] sourcePart = partEdges(width, height, mode, count, index);
+        if (target == ORIGINAL) return new int[]{sourcePart[2] - sourcePart[0], sourcePart[3] - sourcePart[1]};
         int maxPartLongest = 1;
         for (int i = 0; i < count; i++) {
-            Rect part = partRect(width, height, mode, count, i);
-            maxPartLongest = Math.max(maxPartLongest, Math.max(part.width(), part.height()));
+            int[] part = partEdges(width, height, mode, count, i);
+            maxPartLongest = Math.max(maxPartLongest, Math.max(part[2] - part[0], part[3] - part[1]));
         }
         float scale = target / (float)maxPartLongest;
         int scaledWidth = Math.max(1, Math.round(width * scale));
         int scaledHeight = Math.max(1, Math.round(height * scale));
-        Rect scaledPart = partRect(scaledWidth, scaledHeight, mode, count, index);
-        return new int[]{scaledPart.width(), scaledPart.height()};
+        int[] scaledPart = partEdges(scaledWidth, scaledHeight, mode, count, index);
+        return new int[]{scaledPart[2] - scaledPart[0], scaledPart[3] - scaledPart[1]};
     }
 
     static int[] outputJoinedDimensions(int width, int height, int mode, int count, int target) {
         if (target == ORIGINAL) return new int[]{width, height};
         int maxPartLongest = 1;
         for (int i = 0; i < count; i++) {
-            Rect part = partRect(width, height, mode, count, i);
-            maxPartLongest = Math.max(maxPartLongest, Math.max(part.width(), part.height()));
+            int[] part = partEdges(width, height, mode, count, i);
+            maxPartLongest = Math.max(maxPartLongest, Math.max(part[2] - part[0], part[3] - part[1]));
         }
         float scale = target / (float)maxPartLongest;
         return new int[]{Math.max(1, Math.round(width * scale)),
