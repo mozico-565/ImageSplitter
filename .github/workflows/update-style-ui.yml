@@ -72,6 +72,31 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Wait for asynchronous image saving in device QA
+        shell: bash
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import hashlib
+          p=Path('app/src/androidTest/java/com/imagesplitter/app/StyleTransferTest.java')
+          data=p.read_bytes()
+          source=data.decode()
+          if 'waitForActivityFinish(20000)' not in source:
+              sha=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+              if sha!='cab94489763d91b35f77a529f517465c426e11c0':
+                  raise SystemExit('StyleTransferTest changed; merge the QA fix before applying it.')
+              old='click("Use in Splitter");instrumentation.waitForIdleSync();assertTrue(activity.isFinishing());'
+              assert source.count(old)==1
+              source=source.replace(old,'click("Use in Splitter");waitForActivityFinish(20000);')
+              marker='    private void shell(String command)'
+              helper='    private void waitForActivityFinish(long timeout)throws Exception{long until=SystemClock.elapsedRealtime()+timeout;AtomicReference<Boolean> finished=new AtomicReference<>(false);while(SystemClock.elapsedRealtime()<until){instrumentation.runOnMainSync(()->finished.set(activity.isFinishing()||activity.isDestroyed()));if(finished.get())return;Thread.sleep(100);}assertTrue("Use in Splitter must complete background saving and close the screen",finished.get());}\n'
+              assert source.count(marker)==1
+              source=source.replace(marker,helper+marker)
+              source=source.replace('MediaStore.Images.Media.DISPLAY_NAME+" LIKE ?",new String[]{"ImageSplitter-Style-%"}', 'MediaStore.Images.Media.DISPLAY_NAME+" LIKE ? AND "+MediaStore.Images.Media.IS_PENDING+" = 0",new String[]{"ImageSplitter-Style-%"}')
+              p.write_text(source)
+          print('Device QA waits for actual save completion; real AI assertions remain enabled.')
+          PYTEST
+
       - name: Test and build APK
         run: gradle clean testDebugUnitTest assembleDebug assembleDebugAndroidTest --stacktrace
 
@@ -104,9 +129,9 @@ jobs:
 
       - name: Commit the successfully built update to main
         run: |
-          git add app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java app/src/main/assets/style-previews
+          git add app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java app/src/main/assets/style-previews app/src/androidTest/java/com/imagesplitter/app/StyleTransferTest.java
           if ! git diff --cached --quiet; then
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh native Style Transfer UI with book style previews'
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh Style UI and wait for asynchronous save in device QA'
             git push origin HEAD:main
           fi
 
