@@ -78,6 +78,37 @@ jobs:
           print('Applied', len(updates), 'source and preview files. Existing build.yml is preserved.')
           PY
 
+      - name: Make split dimension math independent of Android Rect
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/imagesplitter/app/SplitEngine.java')
+          s = p.read_text()
+          if 'static int[] partEdges(' not in s:
+              signature = '    static Rect partRect(int width, int height, int mode, int count, int index) {'
+              replacement = '    static Rect partRect(int width, int height, int mode, int count, int index) {\n        int[] edges = partEdges(width, height, mode, count, index);\n        return new Rect(edges[0], edges[1], edges[2], edges[3]);\n    }\n\n    static int[] partEdges(int width, int height, int mode, int count, int index) {'
+              assert s.count(signature) == 1, 'Unexpected SplitEngine source'
+              s = s.replace(signature, replacement)
+              s = s.replace('return new Rect(boundary(width, columns, column), boundary(height, shape[1], row),',
+                            'return new int[]{boundary(width, columns, column), boundary(height, shape[1], row),')
+              s = s.replace('boundary(width, columns, column + 1), boundary(height, shape[1], row + 1));',
+                            'boundary(width, columns, column + 1), boundary(height, shape[1], row + 1)};')
+              s = s.replace('Rect sourcePart = partRect(width, height, mode, count, index);',
+                            'int[] sourcePart = partEdges(width, height, mode, count, index);')
+              s = s.replace('sourcePart.width(), sourcePart.height()',
+                            'sourcePart[2] - sourcePart[0], sourcePart[3] - sourcePart[1]')
+              s = s.replace('Rect part = partRect(width, height, mode, count, i);',
+                            'int[] part = partEdges(width, height, mode, count, i);')
+              s = s.replace('Math.max(part.width(), part.height())',
+                            'Math.max(part[2] - part[0], part[3] - part[1])')
+              s = s.replace('Rect scaledPart = partRect(scaledWidth, scaledHeight, mode, count, index);',
+                            'int[] scaledPart = partEdges(scaledWidth, scaledHeight, mode, count, index);')
+              s = s.replace('scaledPart.width(), scaledPart.height()',
+                            'scaledPart[2] - scaledPart[0], scaledPart[3] - scaledPart[1]')
+              p.write_text(s)
+          print('Split dimension calculations no longer depend on Android Rect. Tests remain enabled.')
+          PY
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -102,7 +133,7 @@ jobs:
 
       - name: Commit the successfully built update to main
         run: |
-          git add README.md app/build.gradle app/src/main/AndroidManifest.xml app/src/main/java/com/imagesplitter/app/MainActivity.java app/src/main/java/com/imagesplitter/app/StyleApi.java app/src/main/java/com/imagesplitter/app/StyleDimensions.java app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java app/src/main/assets/style-previews app/src/test/java/com/imagesplitter/app/StyleDimensionsTest.java app/src/androidTest/java/com/imagesplitter/app/StyleTransferTest.java
+          git add app/src/main/java/com/imagesplitter/app/SplitEngine.java README.md app/build.gradle app/src/main/AndroidManifest.xml app/src/main/java/com/imagesplitter/app/MainActivity.java app/src/main/java/com/imagesplitter/app/StyleApi.java app/src/main/java/com/imagesplitter/app/StyleDimensions.java app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java app/src/main/assets/style-previews app/src/test/java/com/imagesplitter/app/StyleDimensionsTest.java app/src/androidTest/java/com/imagesplitter/app/StyleTransferTest.java
           if ! git diff --cached --quiet; then
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Add native AI style transfer with style preview images'
             git push origin HEAD:main
