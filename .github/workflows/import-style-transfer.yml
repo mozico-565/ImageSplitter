@@ -1,0 +1,140 @@
+name: Import Style Transfer and Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_android_qa:
+        description: 'Run Android emulator QA (uses one AI generation)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: imagesplitter-style-import
+  cancel-in-progress: false
+
+jobs:
+  import-and-build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate and apply the source update
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, subprocess, zipfile
+          package = Path('ImageSplitter-Style-Transfer-update.zip')
+          if not package.is_file():
+              raise SystemExit('Upload ImageSplitter-Style-Transfer-update.zip to the repository root first.')
+          expected = 'b816f95604526a5ca8032c19bb4a621df82c6c33faaaa367b7681e6a939f6de7'
+          if hashlib.sha256(package.read_bytes()).hexdigest() != expected:
+              raise SystemExit('The ZIP does not match the supplied update. Download and upload it again without modifying it.')
+          base = 'e35bb693198f0fcb2fdcc71d7fc42cc262eea7b2'
+          subprocess.run(['git', 'cat-file', '-e', base + '^{commit}'], check=True)
+          allowed = {
+              'README.md', 'app/build.gradle', 'app/src/main/AndroidManifest.xml',
+              'app/src/main/java/com/imagesplitter/app/MainActivity.java',
+              'app/src/main/java/com/imagesplitter/app/StyleApi.java',
+              'app/src/main/java/com/imagesplitter/app/StyleDimensions.java',
+              'app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java',
+              'app/src/test/java/com/imagesplitter/app/StyleDimensionsTest.java',
+              'app/src/androidTest/java/com/imagesplitter/app/StyleTransferTest.java',
+          }
+          assets = ['original','pencil','ink','watercolor','oil','anime','comic','pixel',
+                    'illustration_3d','clay','vintage','graphic_novel','charcoal','digital']
+          allowed.update('app/src/main/assets/style-previews/' + name + '.webp' for name in assets)
+          root = Path.cwd().resolve()
+          with zipfile.ZipFile(package) as archive:
+              missing = allowed - set(archive.namelist())
+              if missing:
+                  raise SystemExit('Missing update files: ' + ', '.join(sorted(missing)))
+              updates = []
+              for name in sorted(allowed):
+                  target = root / name
+                  if not target.resolve().is_relative_to(root):
+                      raise SystemExit('Invalid destination: ' + name)
+                  data = archive.read(name)
+                  if name == 'README.md':
+                      data = data.replace(b'Manual **Android APK** workflow dispatch', b'Manual **Import Style Transfer and Build APK** workflow dispatch with Run Android emulator QA checked')
+                  old = subprocess.run(['git', 'show', base + ':' + name], capture_output=True)
+                  if target.exists() and name != 'README.md':
+                      current = target.read_bytes()
+                      if current != data and (old.returncode != 0 or current != old.stdout):
+                          raise SystemExit('This file changed after the base version. Merge it before importing: ' + name)
+                  updates.append((target, data))
+              for target, data in updates:
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+          print('Applied', len(updates), 'source and preview files. Existing build.yml is preserved.')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Test and build APK
+        run: gradle clean testDebugUnitTest assembleDebug assembleDebugAndroidTest --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageSplitter-Style-Transfer-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit the successfully built update to main
+        run: |
+          git add README.md app/build.gradle app/src/main/AndroidManifest.xml app/src/main/java/com/imagesplitter/app/MainActivity.java app/src/main/java/com/imagesplitter/app/StyleApi.java app/src/main/java/com/imagesplitter/app/StyleDimensions.java app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java app/src/main/assets/style-previews app/src/test/java/com/imagesplitter/app/StyleDimensionsTest.java app/src/androidTest/java/com/imagesplitter/app/StyleTransferTest.java
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Add native AI style transfer with style preview images'
+            git push origin HEAD:main
+          fi
+
+      - name: Enable KVM for optional device QA
+        if: inputs.run_android_qa
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run optional native AI workflow test
+        if: inputs.run_android_qa
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            gradle connectedDebugAndroidTest --stacktrace
+            adb pull /sdcard/Android/data/com.imagesplitter.app/files/style-qa/ style-qa
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageSplitter-Style-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            style-qa/
+          if-no-files-found: ignore
