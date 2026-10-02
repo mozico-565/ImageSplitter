@@ -1,0 +1,124 @@
+name: Update Style UI and Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_android_qa:
+        description: 'Run Android emulator QA (uses one AI generation)'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: imagesplitter-style-ui
+  cancel-in-progress: false
+
+jobs:
+  import-and-build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate and apply the UI update
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,zipfile
+          package=Path('ImageSplitter-Style-UI-update.zip')
+          if not package.is_file():
+              raise SystemExit('Upload ImageSplitter-Style-UI-update.zip to the repository root first.')
+          if hashlib.sha256(package.read_bytes()).hexdigest() != '606a350ed8f3752056c0f3547e11a01b6fe328b228bb84a1bef51ab34a3002d6':
+              raise SystemExit('ZIP checksum mismatch. Upload the original supplied package.')
+          assets=['original','pencil','ink','watercolor','oil','anime','comic','pixel','illustration_3d','clay','vintage','graphic_novel','charcoal','digital']
+          allowed={'app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java'}
+          allowed.update('app/src/main/assets/style-previews/'+name+'.webp' for name in assets)
+          def git_hash(data):
+              return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+          with zipfile.ZipFile(package) as z:
+              baseline=json.loads(z.read('BASELINE.json'))
+              if set(baseline)!=allowed or not allowed.issubset(z.namelist()):
+                  raise SystemExit('Invalid UI package file list.')
+              updates=[]
+              for name in sorted(allowed):
+                  target=Path(name)
+                  if not target.is_file():
+                      raise SystemExit('Import the native Style Transfer feature first: '+name)
+                  current=target.read_bytes();data=z.read(name)
+                  if current!=data and git_hash(current)!=baseline[name]:
+                      raise SystemExit('File changed since this UI patch was prepared. Merge first: '+name)
+                  updates.append((target,data))
+              for target,data in updates:
+                  target.write_bytes(data)
+          print('Updated native Style UI and 14 book preview assets.')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Test and build APK
+        run: gradle clean testDebugUnitTest assembleDebug assembleDebugAndroidTest --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageSplitter-Style-UI-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enable KVM for optional device QA
+        if: inputs.run_android_qa
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run optional native AI workflow test
+        if: inputs.run_android_qa
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            gradle connectedDebugAndroidTest --stacktrace
+            adb pull /sdcard/Android/data/com.imagesplitter.app/files/style-qa/ style-qa
+
+      - name: Commit the successfully built update to main
+        run: |
+          git add app/src/main/java/com/imagesplitter/app/StyleTransferActivity.java app/src/main/assets/style-previews
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh native Style Transfer UI with book style previews'
+            git push origin HEAD:main
+          fi
+
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageSplitter-Style-UI-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            style-qa/
+          if-no-files-found: ignore
